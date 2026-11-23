@@ -1,0 +1,25 @@
+.venv/
+.env
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.coverage
+htmlcov/
+
+/data/
+/logs/
+/dist/*.legacy
+dist/executable_x86_64/*.legacy
+*.db
+*.sqlite*
+*.log
+
+# Generated voice/cache artifacts
+resources/voices/*.onnx
+resources/voices/*.json
+*.part
+
+# IDE and OS
+.vscode/
+.idea/
+.DS_Store
