@@ -105,9 +105,3 @@ modificaciones de archivos. Más información en
 [Seguridad y privacidad](docs/SECURITY.md).
 
 Consulta el [registro de cambios](docs/CHANGELOG.md).
-
-## Licencia
-
-El repositorio no incluye todavía un archivo de licencia. Hasta que se añada,
-no asumas que el código puede redistribuirse o modificarse bajo una licencia
-de código abierto.
