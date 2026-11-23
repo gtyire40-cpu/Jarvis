@@ -4,6 +4,7 @@ import os
 import shutil
 import subprocess
 import tempfile
+import time
 from pathlib import Path
 
 import config
@@ -43,7 +44,7 @@ def _find_model():
     raise FileNotFoundError('No encuentro el modelo de voz de Piper (es_ES-davefx-medium.onnx).')
 
 
-def _play_wav(path):
+def _play_wav(path, cancel_event=None):
     direct_error = None
     # Preferimos reproducción directa para no depender de aplay/paplay.
     if getattr(config, 'PIPER_AUDIO_PLAYER', 'auto') in ('auto', 'direct'):
@@ -52,7 +53,15 @@ def _play_wav(path):
             import soundfile as sf
             data, rate = sf.read(path, dtype='float32')
             sd.play(data, rate)
-            sd.wait()
+            if cancel_event is None:
+                sd.wait()
+            else:
+                stream = sd.get_stream()
+                while stream is not None and stream.active:
+                    if cancel_event.is_set():
+                        sd.stop()
+                        return
+                    time.sleep(0.05)
             return
         except Exception as exc:
             direct_error = exc
@@ -63,28 +72,86 @@ def _play_wav(path):
     for candidate in candidates:
         if shutil.which(candidate):
             cmd = [candidate, path] if candidate != 'ffplay' else [candidate, '-nodisp', '-autoexit', '-loglevel', 'error', path]
-            subprocess.run(cmd, check=True, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE, timeout=60)
+            proc = subprocess.Popen(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE)
+            deadline = time.monotonic() + 60
+            try:
+                while True:
+                    if cancel_event is not None and cancel_event.is_set():
+                        if proc.poll() is not None:
+                            proc.communicate()
+                            return
+                        proc.terminate()
+                        try:
+                            proc.communicate(timeout=2)
+                        except subprocess.TimeoutExpired:
+                            proc.kill()
+                            proc.communicate()
+                        return
+                    try:
+                        _stdout, stderr = proc.communicate(timeout=0.1)
+                        break
+                    except subprocess.TimeoutExpired:
+                        if time.monotonic() >= deadline:
+                            proc.kill()
+                            _stdout, stderr = proc.communicate()
+                            raise subprocess.TimeoutExpired(cmd, 60, output=_stdout, stderr=stderr)
+                        continue
+            finally:
+                if proc.poll() is None:
+                    proc.kill()
+                    proc.wait()
+            if proc.returncode != 0:
+                raise subprocess.CalledProcessError(proc.returncode, cmd, stderr=stderr)
             return
     raise RuntimeError('No encuentro un reproductor de audio compatible.')
 
 
-def hablar(texto: str) -> None:
+def hablar(texto: str, cancel_event=None) -> None:
     texto = (texto or '').strip()
-    if not texto:
+    if not texto or (cancel_event is not None and cancel_event.is_set()):
         return
     model = _find_model()
     piper = _find_piper()
     with tempfile.NamedTemporaryFile(suffix='.wav', delete=False) as tmp:
         wav = tmp.name
     try:
-        proc = subprocess.run(
+        proc = subprocess.Popen(
             [piper, '--model', model, '--output_file', wav],
-            input=texto.encode('utf-8'), stdout=subprocess.PIPE, stderr=subprocess.PIPE,
-            check=False, timeout=60,
+            stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
         )
+        command = [piper, '--model', model, '--output_file', wav]
+        deadline = time.monotonic() + 60
+        try:
+            input_data = texto.encode('utf-8')
+            while True:
+                if cancel_event is not None and cancel_event.is_set():
+                    if proc.poll() is not None:
+                        proc.communicate()
+                        return
+                    proc.terminate()
+                    try:
+                        proc.communicate(timeout=2)
+                    except subprocess.TimeoutExpired:
+                        proc.kill()
+                        proc.communicate()
+                    return
+                try:
+                    _stdout, stderr = proc.communicate(input=input_data, timeout=0.1)
+                    break
+                except subprocess.TimeoutExpired:
+                    input_data = None
+                    if time.monotonic() >= deadline:
+                        proc.kill()
+                        _stdout, stderr = proc.communicate()
+                        raise subprocess.TimeoutExpired(command, 60, output=_stdout, stderr=stderr)
+        finally:
+            if proc.poll() is None:
+                proc.kill()
+                proc.wait()
         if proc.returncode != 0:
-            raise RuntimeError(proc.stderr.decode('utf-8', 'replace').strip() or 'Piper devolvió un error.')
-        _play_wav(wav)
+            raise RuntimeError(stderr.decode('utf-8', 'replace').strip() or 'Piper devolvió un error.')
+        if cancel_event is None or not cancel_event.is_set():
+            _play_wav(wav, cancel_event=cancel_event)
     except Exception as exc:
         logger.exception('Error de TTS')
         raise RuntimeError(f'No pude reproducir la respuesta de voz: {exc}') from exc

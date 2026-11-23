@@ -17,6 +17,9 @@ rsync -a --delete \
   --exclude 'logs/' \
   --exclude 'tests/' \
   "$PROJECT_DIR/" "$INSTALL_DIR/"
+mkdir -p "$INSTALL_DIR/executable_x86_64"
+install -m 755 "$INSTALL_DIR/dist/executable_x86_64/jarvis-local.x86_64" \
+  "$INSTALL_DIR/executable_x86_64/jarvis-local.x86_64"
 cat > "$BIN_DIR/jarvis" <<EOF
 #!/usr/bin/env bash
 exec "$INSTALL_DIR/executable_x86_64/jarvis-local.x86_64" "\$@"

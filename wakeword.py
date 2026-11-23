@@ -25,18 +25,22 @@ def _get_model():
     return _model
 
 
-def esperar_palabra_activacion() -> None:
+def esperar_palabra_activacion(cancel_event=None) -> bool:
     """Bloquea hasta que se detecta 'hey jarvis' en el micrófono."""
     model = _get_model()
     print(f'Escucha Esperando "hey jarvis"...')
 
     with sd.InputStream(samplerate=16000, channels=1, dtype="int16", blocksize=FRAME_SAMPLES) as stream:
         while True:
+            if cancel_event is not None and cancel_event.is_set():
+                return False
             audio_chunk, _ = stream.read(FRAME_SAMPLES)
+            if cancel_event is not None and cancel_event.is_set():
+                return False
             audio_chunk = audio_chunk.flatten().astype(np.int16)
             prediction = model.predict(audio_chunk)
             score = prediction.get(config.WAKE_WORD_MODEL, 0.0)
             if score > config.WAKE_WORD_THRESHOLD:
                 model.reset()
                 print("✅ ¡Palabra de activación detectada!")
-                return
+                return True

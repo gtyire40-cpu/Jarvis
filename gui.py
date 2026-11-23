@@ -23,6 +23,7 @@ from tkinter import messagebox, ttk
 
 import config
 import memory
+import tools
 from core.agent import Agent
 from core.security import SecurityManager
 from core.tool_manager import ToolManager
@@ -68,12 +69,19 @@ def load_settings():
     defaults = {"model": config.MODEL, "ollama_url": config.OLLAMA_URL, "temperature": 0.2, "max_tool_iterations": config.MAX_TOOL_ITERATIONS,
                 "history_max": config.HISTORIAL_MENSAJES_MAX, "memory_context": config.MEMORY_CONTEXT_RECALL, "memory_recalls": config.MEMORY_CONTEXT_MAX_RECALLS,
                 "speak_responses": True, "continuous_voice": False, "show_activity": True, "whisper_model": config.WHISPER_MODEL_SIZE,
-                "wake_threshold": config.WAKE_WORD_THRESHOLD, "silence_seconds": config.VOICE_SILENCE_SECONDS, "rms_threshold": config.VOICE_RMS_THRESHOLD}
+                "wake_threshold": config.WAKE_WORD_THRESHOLD, "silence_seconds": config.VOICE_SILENCE_SECONDS, "rms_threshold": config.VOICE_RMS_THRESHOLD,
+                "enabled_tool_groups": sorted(config.ENABLED_TOOL_GROUPS)}
     try:
         with open(SETTINGS_PATH, encoding="utf-8") as f:
             d = json.load(f)
             if isinstance(d, dict): defaults.update(d)
     except (OSError, ValueError): pass
+    groups = defaults.get("enabled_tool_groups", [])
+    if not isinstance(groups, list):
+        groups = list(config.ENABLED_TOOL_GROUPS)
+    defaults["enabled_tool_groups"] = sorted(
+        {group for group in groups if isinstance(group, str)} & set(tools.TOOL_GROUPS)
+    )
     return defaults
 
 
@@ -255,11 +263,20 @@ class JarvisGUI:
         self.root = root
         self.root.title("JARVIS LOCAL"); self.root.geometry("1360x820"); self.root.minsize(1060, 700); self.root.configure(bg=BG)
         self.settings = load_settings(); self.events = queue.Queue(); self.busy = False; self.listening = False
-        self.voice_stop = threading.Event(); self.ready_event = threading.Event(); self.ready_event.set()
+        self.voice_stop = threading.Event(); self.cancel_event = threading.Event(); self.speech_cancel_event = threading.Event()
+        self.speaking = False; self.ready_event = threading.Event(); self.ready_event.set()
+        self._pending_privacy_close = None; self._pending_confirm_close = None
         self.mode = "Normal"; self.pending_directive = None
         self.messages = [{"role": "system", "content": config.SYSTEM_PROMPT}]
         memory.init_db(); self.messages.extend(memory.cargar_historial(int(self.settings.get("history_max", 40))))
-        security = SecurityManager(); self.agent = Agent(ToolManager(security, self._confirm_action, event_callback=self._tool_event))
+        security = SecurityManager()
+        self.agent = Agent(ToolManager(
+            security,
+            self._confirm_action,
+            event_callback=self._tool_event,
+            privacy_callback=self._privacy_confirm,
+            enabled_tool_groups=self.settings["enabled_tool_groups"],
+        ))
         self._configure_style(); self._build(); self._render_history(); self._animate_header(); self._poll_stats()
         self.root.after(60, self._drain_events); self.root.protocol("WM_DELETE_WINDOW", self._close)
 
@@ -364,6 +381,9 @@ class JarvisGUI:
         self.send_btn = HoverButton(actions, "ENVIAR  ⏎", command=self._send_text, radius=10, bg_color=ACCENT, hover_color=ACCENT_SOFT,
                                      fg="#03101a", font=(FONT, 10, "bold"), anchor="center", padx=15, pady=10)
         self.send_btn.pack(fill="x")
+        self.cancel_btn = HoverButton(actions, "■ DETENER", command=self._cancel_current, radius=10, bg_color="#4a1d2b", hover_color="#6b2638",
+                                      fg="#ffdce2", font=(FONT, 9, "bold"), anchor="center", padx=12, pady=8)
+        self.cancel_btn.pack_forget()
         self.voice_button = HoverButton(actions, "VOZ", command=self._toggle_voice, radius=10, bg_color=PANEL_2, hover_color="#1b2b43",
                                          fg=TEXT, font=(FONT, 9, "bold"), anchor="center", padx=12, pady=8)
         self.voice_button.pack(fill="x", pady=(7, 0))
@@ -454,6 +474,22 @@ class JarvisGUI:
         page, inner = self._new_page("Herramientas", "Mapa de capacidades de Jarvis y su estado operativo.")
         self._lock_page_size(page)
         box = tk.Frame(inner, bg=PANEL); box.pack(fill="both", expand=True, padx=24, pady=(0, 24))
+        group_panel = RoundedPanel(box, radius=10, bg_color=CARD, outline_color=BORDER_SOFT, outline_width=1, parent_bg=PANEL)
+        group_panel.pack(fill="x", pady=(0, 10))
+        tk.Label(group_panel.inner, text="GRUPOS ACTIVOS", bg=CARD, fg=ACCENT, font=(FONT, 9, "bold")).pack(anchor="w", padx=14, pady=(10, 4))
+        group_grid = tk.Frame(group_panel.inner, bg=CARD); group_grid.pack(fill="x", padx=12, pady=(0, 8))
+        self.tool_group_vars = {}
+        for index, (group, label) in enumerate(tools.TOOL_GROUP_LABELS.items()):
+            variable = tk.BooleanVar(value=group in self.agent.tools.enabled_tool_groups)
+            self.tool_group_vars[group] = variable
+            ttk.Checkbutton(group_grid, text=label, variable=variable).grid(
+                row=index // 2, column=index % 2, sticky="w", padx=4, pady=2,
+            )
+        group_grid.columnconfigure(0, weight=1); group_grid.columnconfigure(1, weight=1)
+        HoverButton(group_panel.inner, "GUARDAR GRUPOS", command=self._save_tool_groups, radius=8, bg_color=PANEL_2,
+                    hover_color="#1b2b43", fg=TEXT, font=(FONT, 8, "bold"), anchor="center", padx=12, pady=6).pack(
+                        anchor="e", padx=12, pady=(0, 10),
+                    )
         items = [("SISTEMA", "Fecha, procesos, RAM, disco y diagnóstico"), ("APLICACIONES", "Abrir, cerrar y verificar aplicaciones"),
                   ("ARCHIVOS", "Crear, leer, modificar y organizar archivos"), ("CONTROL GUI", "Ratón, teclado y ventanas"),
                   ("CAPTURA", "Captura de pantalla sin depender de OCR"), ("VISIÓN", "OCR y visión local cuando estén disponibles"),
@@ -635,6 +671,9 @@ class JarvisGUI:
         self.settings = load_settings()
         for key, var in self.setting_vars.items():
             if key in self.settings: var.set(self.settings[key])
+        for group, variable in self.tool_group_vars.items():
+            variable.set(group in self.settings["enabled_tool_groups"])
+        self._apply_tool_groups(self.settings["enabled_tool_groups"])
         self.status.set("VALORES RESTAURADOS")
 
     def _refresh_memory(self):
@@ -657,15 +696,113 @@ class JarvisGUI:
     def _confirm_action(self, name, preview):
         result = {}; done = threading.Event()
         self.events.put(("confirm", (name, preview, result, done)))
-        done.wait()
+        while not done.wait(0.1):
+            if self.cancel_event.is_set():
+                return False
         ans = bool(result.get("ok"))
         self.events.put(("status", "ACCIÓN CONFIRMADA" if ans else "ACCIÓN CANCELADA"))
         return ans
 
+    def _privacy_confirm(self, name, destination, disclosure):
+        result = {}; done = threading.Event()
+        self.events.put(("privacy", (name, destination, disclosure, result, done)))
+        while not done.wait(0.1):
+            if self.cancel_event.is_set():
+                return False
+        return bool(result.get("ok"))
+
+    def _cancel_current(self):
+        if self.busy:
+            self.cancel_event.set()
+            self.status.set("CANCELANDO…")
+            if self._pending_privacy_close:
+                self._pending_privacy_close(False)
+            if self._pending_confirm_close:
+                self._pending_confirm_close(False)
+        if self.speaking:
+            self.speech_cancel_event.set()
+            self.status.set("DETENIENDO VOZ…")
+        if self.listening:
+            self.voice_stop.set()
+            self.status.set("DETENIENDO ESCUCHA…")
+
+    def _apply_tool_groups(self, groups):
+        self.agent.tools.enabled_tool_groups = set(groups)
+        config.ENABLED_TOOL_GROUPS = set(groups)
+
+    def _save_tool_groups(self):
+        groups = sorted(group for group, variable in self.tool_group_vars.items() if variable.get())
+        updated_settings = {**self.settings, "enabled_tool_groups": groups}
+        try:
+            save_settings(updated_settings)
+        except OSError as exc:
+            messagebox.showerror("Herramientas", f"No se pudieron guardar los grupos: {exc}", parent=self.root)
+            return
+        self.settings = updated_settings
+        self._apply_tool_groups(groups)
+        self.status.set("GRUPOS DE HERRAMIENTAS GUARDADOS")
+
+    def _show_privacy_dialog(self, name, destination, disclosure, result, done):
+        dialog = tk.Toplevel(self.root)
+        dialog.title("Consentimiento de privacidad")
+        dialog.transient(self.root); dialog.geometry("660x500"); dialog.minsize(480, 320)
+        dialog.configure(bg=PANEL)
+        tk.Label(dialog, text="DATOS QUE SALDRÁN DEL EQUIPO", bg=PANEL, fg=WARNING,
+                 font=(FONT, 11, "bold")).pack(anchor="w", padx=16, pady=(14, 4))
+        tk.Label(dialog, text=f"Acción: {name}\nDestino: {destination}", bg=PANEL, fg=TEXT,
+                 justify="left", font=(FONT, 9)).pack(anchor="w", padx=16, pady=(0, 8))
+        content = tk.Frame(dialog, bg=PANEL); content.pack(fill="both", expand=True, padx=16)
+        details = tk.Text(content, wrap="word", bg="#08101b", fg=TEXT, relief="flat", padx=10, pady=8)
+        scrollbar = ttk.Scrollbar(content, orient="vertical", command=details.yview)
+        details.configure(yscrollcommand=scrollbar.set)
+        details.pack(side="left", fill="both", expand=True); scrollbar.pack(side="right", fill="y")
+        details.insert("1.0", disclosure); details.configure(state="disabled")
+        buttons = tk.Frame(dialog, bg=PANEL); buttons.pack(fill="x", padx=16, pady=12)
+
+        def finish(approved):
+            if not dialog.winfo_exists():
+                return
+            result["ok"] = approved
+            self._pending_privacy_close = None
+            dialog.destroy()
+            done.set()
+
+        self._pending_privacy_close = finish
+        dialog.protocol("WM_DELETE_WINDOW", lambda: finish(False))
+        HoverButton(buttons, "CANCELAR ENVÍO", command=lambda: finish(False), radius=8, bg_color="#4a1d2b",
+                    hover_color="#6b2638", fg="#ffdce2", font=(FONT, 9, "bold"), padx=12, pady=7).pack(side="right", padx=(8, 0))
+        HoverButton(buttons, "AUTORIZAR", command=lambda: finish(True), radius=8, bg_color=ACCENT,
+                    hover_color=ACCENT_SOFT, fg="#03101a", font=(FONT, 9, "bold"), padx=12, pady=7).pack(side="right")
+        dialog.grab_set()
+
+    def _show_confirm_dialog(self, name, preview, result, done):
+        dialog = tk.Toplevel(self.root)
+        dialog.title("Confirmación de seguridad")
+        dialog.transient(self.root); dialog.configure(bg=PANEL)
+        tk.Label(dialog, text=f"Jarvis quiere ejecutar {name}:\n\n{preview}", bg=PANEL, fg=TEXT,
+                 justify="left", wraplength=440, font=(FONT, 10)).pack(padx=18, pady=18)
+        buttons = tk.Frame(dialog, bg=PANEL); buttons.pack(fill="x", padx=16, pady=(0, 14))
+
+        def finish(approved):
+            if not dialog.winfo_exists():
+                return
+            result["ok"] = approved
+            self._pending_confirm_close = None
+            dialog.destroy()
+            done.set()
+
+        self._pending_confirm_close = finish
+        dialog.protocol("WM_DELETE_WINDOW", lambda: finish(False))
+        HoverButton(buttons, "NO PERMITIR", command=lambda: finish(False), radius=8, bg_color="#4a1d2b",
+                    hover_color="#6b2638", fg="#ffdce2", font=(FONT, 9, "bold"), padx=12, pady=7).pack(side="right", padx=(8, 0))
+        HoverButton(buttons, "PERMITIR", command=lambda: finish(True), radius=8, bg_color=ACCENT,
+                    hover_color=ACCENT_SOFT, fg="#03101a", font=(FONT, 9, "bold"), padx=12, pady=7).pack(side="right")
+        dialog.grab_set()
+
     def _tool_event(self, event): self.events.put(("tool", event))
 
     def _send_text(self):
-        if self.busy: return
+        if self.busy or self.speaking: return
         text = self.input.get("1.0", "end").strip()
         if not text: return
         self.input.delete("1.0", "end"); self._hide_palette()
@@ -673,8 +810,8 @@ class JarvisGUI:
 
     def _toggle_voice(self):
         if self.listening:
-            self.voice_stop.set(); self.listening = False; self.voice_button._labels[-1].configure(text="VOZ"); self.status.set("DETENIENDO ESCUCHA…"); return
-        if self.busy: return
+            self.voice_stop.set(); self.status.set("DETENIENDO ESCUCHA…"); return
+        if self.busy or self.speaking: return
         self.listening = True; self.voice_stop.clear(); self.voice_button._labels[-1].configure(text="■ DETENER")
         threading.Thread(target=self._voice_loop, daemon=True).start()
 
@@ -686,7 +823,7 @@ class JarvisGUI:
             import stt
             while not self.voice_stop.is_set():
                 self.events.put(("status", "ESCUCHANDO…"))
-                text = stt.grabar_hasta_silencio_y_transcribir()
+                text = stt.grabar_hasta_silencio_y_transcribir(cancel_event=self.voice_stop)
                 if self.voice_stop.is_set(): break
                 if text.strip():
                     self.ready_event.clear()
@@ -699,8 +836,11 @@ class JarvisGUI:
             self.events.put(("voice_done", None))
 
     def _submit(self, text, speak=False):
-        if self.busy: return
+        if self.busy or self.speaking: return
+        self.cancel_event.clear()
         self.busy = True; self.ready_event.clear(); self.status.set("JARVIS • PENSANDO"); self.send_btn._apply(DIM)
+        self.cancel_btn.pack(fill="x", pady=(7, 0))
+        self.voice_button.pack_forget()
         self.chat.add_bubble("user", text)
         memory.guardar_mensaje("user", text)
         outgoing = text
@@ -717,11 +857,16 @@ class JarvisGUI:
     def _agent_worker(self, speak):
         try:
             response = ""
-            for chunk in self.agent.stream(self.messages, self.settings.get("model"), self.settings.get("ollama_url")): response += chunk
+            for chunk in self.agent.stream(
+                self.messages,
+                self.settings.get("model"),
+                self.settings.get("ollama_url"),
+                cancel_event=self.cancel_event,
+            ): response += chunk
             response = response.strip()
             if response:
                 memory.guardar_mensaje("assistant", response); self.messages.append({"role": "assistant", "content": response})
-                self.events.put(("response", (response, speak)))
+                self.events.put(("response", (response, speak and not self.agent.last_run.get("cancelled", False))))
             for record in self.agent.last_run.get("tool_results", []): memory.guardar_ejecucion_herramienta(record)
             if not response: self.events.put(("error", "Jarvis no devolvió una respuesta."))
         except Exception as exc:
@@ -736,8 +881,10 @@ class JarvisGUI:
                 if kind == "status": self.status.set(payload)
                 elif kind == "confirm":
                     name, preview, result, done = payload
-                    result["ok"] = messagebox.askyesno("Confirmación de seguridad", f"Jarvis quiere ejecutar:\n\n{preview}\n\n¿Permitir esta acción?", parent=self.root)
-                    done.set()
+                    self._show_confirm_dialog(name, preview, result, done)
+                elif kind == "privacy":
+                    name, destination, disclosure, result, done = payload
+                    self._show_privacy_dialog(name, destination, disclosure, result, done)
                 elif kind == "voice_text":
                     self._submit(payload, True)
                 elif kind == "tool":
@@ -749,25 +896,47 @@ class JarvisGUI:
                 elif kind == "response":
                     if getattr(self, "_thinking_stop", None): self._thinking_stop(); self._thinking_stop = None
                     response, speak = payload; self.chat.add_bubble("assistant", response, animate=True); self.status.set("RESPUESTA LISTA")
-                    if speak: threading.Thread(target=self._speak_worker, args=(response,), daemon=True).start()
+                    if speak:
+                        self.speaking = True; self.speech_cancel_event = threading.Event()
+                        self.send_btn._apply(DIM)
+                        self.cancel_btn.pack(fill="x", pady=(7, 0)); self.voice_button.pack_forget()
+                        self.status.set("REPRODUCIENDO VOZ…")
+                        threading.Thread(target=self._speak_worker, args=(response, self.speech_cancel_event), daemon=True).start()
                 elif kind == "error":
                     if getattr(self, "_thinking_stop", None): self._thinking_stop(); self._thinking_stop = None
                     self.status.set("ERROR"); self._activity(payload, "err"); messagebox.showerror("Jarvis", payload, parent=self.root)
                 elif kind == "ready":
-                    self.busy = False; self.send_btn._apply(ACCENT); self.status.set("SISTEMA LISTO" if not self.listening else "ESCUCHANDO…"); self.ready_event.set()
+                    self.busy = False
+                    if not self.speaking:
+                        self.cancel_btn.pack_forget(); self.voice_button.pack(fill="x", pady=(7, 0))
+                    self.send_btn._apply(DIM if self.speaking else ACCENT)
+                    self.status.set("REPRODUCIENDO VOZ…" if self.speaking else "SISTEMA LISTO" if not self.listening else "ESCUCHANDO…")
+                    self.ready_event.set()
+                elif kind == "speech_done":
+                    self.speaking = False
+                    if not self.busy:
+                        self.cancel_btn.pack_forget(); self.voice_button.pack(fill="x", pady=(7, 0))
+                        self.send_btn._apply(ACCENT)
+                    self.status.set("SISTEMA LISTO" if not self.listening else "ESCUCHANDO…")
                 elif kind == "voice_done":
                     self.listening = False; self.voice_button._labels[-1].configure(text="VOZ"); self.status.set("SISTEMA LISTO" if not self.busy else "PROCESANDO…")
         except queue.Empty:
             pass
         self.root.after(60, self._drain_events)
 
-    def _speak_worker(self, text):
-        try: import tts; self.events.put(("status", "REPRODUCIENDO VOZ…")); tts.hablar(text)
+    def _speak_worker(self, text, cancel_event):
+        try: import tts; tts.hablar(text, cancel_event=cancel_event)
         except Exception as exc: self.events.put(("error", f"TTS: {exc}"))
-        finally: self.events.put(("status", "SISTEMA LISTO"))
+        finally: self.events.put(("speech_done", None))
 
     def _close(self):
         self.voice_stop.set()
+        self.cancel_event.set()
+        self.speech_cancel_event.set()
+        if self._pending_privacy_close:
+            self._pending_privacy_close(False)
+        if self._pending_confirm_close:
+            self._pending_confirm_close(False)
         self.root.destroy()
 
 

@@ -773,3 +773,52 @@ TOOL_SCHEMAS.extend([
         "exacto": {"type": "boolean"},
     }, ["texto"]),
 ])
+
+TOOL_GROUPS = {
+    "web": {
+        "buscar_en_web", "leer_pagina_web", "abrir_url",
+    },
+    "browser": {
+        "navegador_abrir", "navegador_atras", "navegador_click_texto",
+        "navegador_click_role", "navegador_escribir", "navegador_tecla",
+        "navegador_extraer", "navegador_estado", "navegador_cerrar",
+    },
+    "desktop": {
+        "obtener_fecha_hora", "estado_sistema", "espacio_libre_disco", "uso_ram",
+        "listar_procesos", "obtener_proceso", "listar_ventanas", "enfocar_ventana",
+        "mover_redimensionar_ventana", "capturar_pantalla", "observar_pantalla",
+        "hacer_click_en_texto", "obtener_posicion_raton", "obtener_tamano_pantalla",
+        "mover_raton", "hacer_click", "escribir_en_escritorio", "pulsar_tecla",
+        "analizar_pantalla", "buscar_elemento_visual", "esperar_elemento_visual",
+        "click_elemento_visual",
+    },
+    "files": {
+        "buscar_archivos", "listar_archivos", "leer_archivo", "crear_archivo",
+        "modificar_archivo", "eliminar_archivo", "crear_carpeta",
+    },
+    "email": {"leer_correos", "enviar_correo"},
+    "media": {
+        "abrir_aplicacion", "comprobar_aplicacion", "cerrar_aplicacion",
+        "listar_aplicaciones_permitidas", "controlar_volumen", "controlar_musica",
+    },
+    "memory": {
+        "agendar_evento", "listar_eventos", "guardar_recuerdo", "buscar_recuerdos",
+        "borrar_recuerdo", "crear_recordatorio", "listar_recordatorios",
+        "completar_recordatorio", "crear_tarea", "listar_tareas", "actualizar_tarea",
+        "completar_tarea", "cancelar_tarea", "obtener_contexto_relevante",
+    },
+}
+
+TOOL_GROUP_LABELS = {
+    "web": "Búsqueda y lectura web",
+    "browser": "Automatización del navegador",
+    "desktop": "Sistema y control de escritorio",
+    "files": "Archivos",
+    "email": "Correo",
+    "media": "Aplicaciones y medios",
+    "memory": "Memoria y productividad",
+}
+
+TOOL_TO_GROUP = {
+    name: group for group, names in TOOL_GROUPS.items() for name in names
+}

@@ -11,7 +11,7 @@ class Agent:
         self.tools = tool_manager or ToolManager()
         self.last_run = self.tools.last_run
 
-    def _with_plan(self, messages, model=None, base_url=None):
+    def _with_plan(self, messages, model=None, base_url=None, cancel_event=None):
         if not messages:
             return messages
         goal = messages[-1].get("content", "")
@@ -38,9 +38,15 @@ class Agent:
                 context_text = ""
 
         plan_text = ""
-        if len(goal) >= 20:
+        if len(goal) >= 20 and not (cancel_event and cancel_event.is_set()):
             try:
-                steps = make_plan(goal, model=model, base_url=base_url)
+                steps = make_plan(
+                    goal,
+                    model=model,
+                    base_url=base_url,
+                    privacy_callback=self.tools.approve_external,
+                    cancel_event=cancel_event,
+                )
             except Exception:
                 steps = []
             if steps:
@@ -60,11 +66,19 @@ class Agent:
         return [injected, *messages]
 
     def run(self, messages: list, model=None, base_url=None) -> str:
+        config.configure_runtime(model, base_url)
         result = llm.chat(self._with_plan(messages, model, base_url), tool_manager=self.tools, model=model, base_url=base_url)
         self.last_run = self.tools.last_run
         return result
 
-    def stream(self, messages: list, model=None, base_url=None):
-        for chunk in llm.chat_stream(self._with_plan(messages, model, base_url), tool_manager=self.tools, model=model, base_url=base_url):
+    def stream(self, messages: list, model=None, base_url=None, cancel_event=None):
+        config.configure_runtime(model, base_url)
+        for chunk in llm.chat_stream(
+            self._with_plan(messages, model, base_url, cancel_event),
+            tool_manager=self.tools,
+            model=model,
+            base_url=base_url,
+            cancel_event=cancel_event,
+        ):
             yield chunk
         self.last_run = self.tools.last_run

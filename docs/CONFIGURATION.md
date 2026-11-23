@@ -95,3 +95,9 @@ Ollama, temperatura, pasos máximos, historial, opciones de voz y actividad.
 La edición manual de `.env` puede no reemplazar valores previamente guardados
 en `settings.json`; elimina o respalda ese archivo si quieres que la GUI
 vuelva a cargar valores iniciales.
+
+Los grupos de herramientas se pueden activar desde la página **Herramientas**
+de la GUI o configurar con `JARVIS_ENABLED_TOOL_GROUPS`, una lista separada
+por comas: `web,browser,desktop,files,email,media,memory`. Todos están
+habilitados por defecto. La selección de la interfaz se guarda en
+`settings.json`.

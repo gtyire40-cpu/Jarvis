@@ -10,13 +10,29 @@ from core.computer_agent import ComputerAgent
 logger = logging.getLogger(__name__)
 
 class ToolManager:
-    def __init__(self, security=None, confirm_callback=None, event_callback=None, verifier=None, max_retries=None):
+    def __init__(
+        self,
+        security=None,
+        confirm_callback=None,
+        event_callback=None,
+        verifier=None,
+        max_retries=None,
+        privacy_callback=None,
+        enabled_tool_groups=None,
+    ):
         self.security = security or SecurityManager()
         self.confirm_callback = confirm_callback
         self.event_callback = event_callback
+        self.privacy_callback = privacy_callback
         self.verifier = verifier or Verifier()
         self.computer = ComputerAgent()
         self.max_retries = config.MAX_RECOVERY_RETRIES if max_retries is None else max(0, int(max_retries))
+        groups = config.ENABLED_TOOL_GROUPS if enabled_tool_groups is None else enabled_tool_groups
+        self.enabled_tool_groups = set(groups) & set(tools.TOOL_GROUPS)
+        self.cancel_event = None
+        uncategorized = set(tools.DISPATCH) - set(tools.TOOL_TO_GROUP)
+        if uncategorized:
+            raise RuntimeError(f"Hay herramientas sin grupo asignado: {', '.join(sorted(uncategorized))}")
         # Evidencia de ejecución de la conversación actual. Solo llm.py la llena
         # cuando Ollama emite tool_calls reales.
         self.last_run = {"tool_calls": [], "tool_results": [], "tool_call_count": 0}
@@ -30,7 +46,19 @@ class ToolManager:
 
     @property
     def schemas(self):
-        return tools.TOOL_SCHEMAS
+        return [
+            schema for schema in tools.TOOL_SCHEMAS
+            if tools.TOOL_TO_GROUP.get(schema["function"]["name"]) in self.enabled_tool_groups
+        ]
+
+    def approve_external(self, name, destination, disclosure):
+        if self.privacy_callback is None:
+            logger.warning("Envío externo bloqueado sin callback de privacidad: %s", name)
+            return False
+        return bool(self.privacy_callback(name, destination, disclosure))
+
+    def _cancelled(self):
+        return self.cancel_event is not None and self.cancel_event.is_set()
 
     def execute(self, name: str, args: dict | None = None) -> ToolResult:
         args = args or {}
@@ -39,9 +67,25 @@ class ToolManager:
             return ToolResult(False, name, error=f"Herramienta desconocida: {name}")
         if not isinstance(args, dict):
             return ToolResult(False, name, error="Los argumentos deben ser un objeto JSON.")
+        group = tools.TOOL_TO_GROUP.get(name)
+        if group is None:
+            return ToolResult(False, name, error="La herramienta no tiene un grupo asignado.")
+        if group not in self.enabled_tool_groups:
+            return ToolResult(False, name, error=f"El grupo de herramientas '{group}' está desactivado.")
+        if self._cancelled():
+            return ToolResult(False, name, error="Operación cancelada antes de iniciar la herramienta.")
+
+        from core.privacy import tool_disclosure
+        disclosure = tool_disclosure(name, args)
+        if disclosure:
+            destination, details = disclosure
+            if not self.approve_external(name, destination, details):
+                return ToolResult(False, name, error="Envío externo cancelado o no autorizado.")
 
         policy = self.security.policy_for(name)
         preview = f"{name}({args})"
+        if self._cancelled():
+            return ToolResult(False, name, error="Operación cancelada antes de iniciar la herramienta.")
         if policy.confirmation and not self.security.approve(name, self.confirm_callback, preview):
             return ToolResult(False, name, message="Acción cancelada: requiere confirmación.", requires_confirmation=True)
 
@@ -82,6 +126,9 @@ class ToolManager:
                 if not verification.retryable or attempts > self.max_retries:
                     self._emit({"phase": "end", "tool": name, "success": False, "verified": False, "attempt": attempts, "elapsed": elapsed})
                     return result
+                if self._cancelled():
+                    self._emit({"phase": "end", "tool": name, "success": False, "verified": False, "attempt": attempts, "elapsed": elapsed, "cancelled": True})
+                    return result
 
                 # En acciones de interfaz, observa el estado real y devuelve el diagnóstico
                 # al LLM. Así la recuperación es adaptativa en vez de repetir ciegamente.
@@ -97,7 +144,11 @@ class ToolManager:
                 elapsed = time.perf_counter() - started
                 result = ToolResult(False, name, error=str(exc))
                 last_result = result
-                retryable = (not policy.confirmation) and self.verifier.is_retryable_error(str(exc))
+                retryable = (
+                    not policy.confirmation
+                    and not self._cancelled()
+                    and self.verifier.is_retryable_error(str(exc))
+                )
                 logger.exception("tool=%s failed attempt=%d retryable=%s elapsed=%.3fs", name, attempts, retryable, elapsed)
                 if retryable and attempts <= self.max_retries:
                     # No emitimos "end" todavía: la ejecución sigue en curso (se va a
@@ -115,4 +166,3 @@ class ToolManager:
                 return result
 
         return last_result or ToolResult(False, name, error="La herramienta no pudo completarse.")
-

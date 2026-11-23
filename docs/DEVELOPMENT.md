@@ -22,6 +22,16 @@ Para comprobar sintaxis:
 ./.venv/bin/python -m compileall -q .
 ```
 
+En Linux x86_64, el lanzador nativo se genera desde su fuente con:
+
+```bash
+./scripts/build_launcher.sh
+```
+
+La compilación reproducible requiere un compilador C compatible, como GCC o
+Clang. El workflow de GitHub Actions ejecuta las pruebas en Python 3.12 y
+3.13 y compara dos compilaciones independientes del lanzador.
+
 Al ejecutar pruebas, usa una base de datos temporal o define
 `JARVIS_DB_PATH` para no modificar datos personales en `data/`.
 

@@ -61,6 +61,11 @@ SMTP_SERVER = os.getenv("JARVIS_SMTP_SERVER", "smtp.gmail.com")
 SMTP_PORT = int(os.getenv("JARVIS_SMTP_PORT", "587"))
 MUSIC_PLAYER = os.getenv("JARVIS_MUSIC_PLAYER")
 ALLOWED_APPS = {a.strip().lower() for a in os.getenv("JARVIS_ALLOWED_APPS", "firefox,code,nautilus,spotify,steam,gedit,gnome-terminal,gnome-calculator,librewolf,thunderbird,vlc,discord,chrome,chromium,brave").split(",") if a.strip()}
+ENABLED_TOOL_GROUPS = {
+    group.strip().lower()
+    for group in os.getenv("JARVIS_ENABLED_TOOL_GROUPS", "web,browser,desktop,files,email,media,memory").split(",")
+    if group.strip()
+}
 
 SYSTEM_PROMPT = """Eres Jarvis, un asistente personal local en Linux. Hablas español y eres breve, claro y preciso.
 

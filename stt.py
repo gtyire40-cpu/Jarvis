@@ -34,13 +34,24 @@ def _get_model():
     return _model
 
 
-def _transcribir_audio(audio: np.ndarray) -> str:
+def _transcribir_audio(audio: np.ndarray, cancel_event=None) -> str:
+    if cancel_event is not None and cancel_event.is_set():
+        return ""
     with tempfile.NamedTemporaryFile(suffix=".wav", delete=False) as tmp:
         path = tmp.name
         write_wav(path, SAMPLE_RATE, audio.astype(np.int16))
     try:
-        segments, _ = _get_model().transcribe(path, language="es", vad_filter=True)
-        return " ".join(seg.text.strip() for seg in segments if seg.text and seg.text.strip())
+        model = _get_model()
+        if cancel_event is not None and cancel_event.is_set():
+            return ""
+        segments, _ = model.transcribe(path, language="es", vad_filter=True)
+        text = []
+        for segment in segments:
+            if cancel_event is not None and cancel_event.is_set():
+                return ""
+            if segment.text and segment.text.strip():
+                text.append(segment.text.strip())
+        return " ".join(text)
     finally:
         import os
         try: os.unlink(path)
@@ -62,7 +73,7 @@ def grabar_duracion_fija_y_transcribir(segundos: float = None) -> str:
     return texto
 
 
-def grabar_hasta_silencio_y_transcribir(max_seconds: float = None, silence_seconds: float = None) -> str:
+def grabar_hasta_silencio_y_transcribir(max_seconds: float = None, silence_seconds: float = None, cancel_event=None) -> str:
     """Graba desde que hay voz hasta detectar silencio sostenido, sin duración fija obligatoria."""
     max_seconds = float(max_seconds or config.VOICE_MAX_SECONDS)
     silence_seconds = float(silence_seconds or config.VOICE_SILENCE_SECONDS)
@@ -85,7 +96,11 @@ def grabar_hasta_silencio_y_transcribir(max_seconds: float = None, silence_secon
         raise RuntimeError(f"No pude iniciar el microfono: {exc}") from exc
     try:
         for _ in range(max_blocks):
+            if cancel_event is not None and cancel_event.is_set():
+                break
             block, _ = stream.read(blocksize)
+            if cancel_event is not None and cancel_event.is_set():
+                break
             block = block.reshape(-1).copy()
             level = _rms(block)
             recent.append(block)
@@ -115,14 +130,14 @@ def grabar_hasta_silencio_y_transcribir(max_seconds: float = None, silence_secon
         stream.stop()
         stream.close()
 
-    if not frames:
+    if not frames or (cancel_event is not None and cancel_event.is_set()):
         return ""
     audio = np.concatenate(frames)
-    texto = _transcribir_audio(audio)
+    texto = _transcribir_audio(audio, cancel_event=cancel_event)
     print(f"Texto Transcrito: {texto}")
     return texto
 
 
-def grabar_y_transcribir() -> str:
+def grabar_y_transcribir(cancel_event=None) -> str:
     input("Pulsa ENTER y habla...")
-    return grabar_hasta_silencio_y_transcribir()
+    return grabar_hasta_silencio_y_transcribir(cancel_event=cancel_event)

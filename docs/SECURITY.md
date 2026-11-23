@@ -23,6 +23,14 @@ de usuario de confianza y revisa las confirmaciones antes de permitir acciones.
 - Las búsquedas envían la consulta al servicio de búsqueda web.
 - Leer una URL descarga su contenido desde Internet.
 - IMAP/SMTP envía credenciales y datos al proveedor configurado.
+- Antes de cada petición a un Ollama remoto y de cada operación web, navegador
+  o correo, Jarvis muestra el destino y los datos que enviará y solicita
+  autorización. Una dirección de loopback (por ejemplo, `localhost`) no
+  necesita ese consentimiento; los servidores de la red local sí.
+- El análisis visual remoto muestra que se enviará una captura de pantalla
+  completa y la instrucción indicada antes de enviar la imagen.
+- Puedes cancelar una generación, escucha o respuesta hablada; una herramienta
+  que ya empezó termina antes de detener los siguientes pasos.
 - Los modelos de voz pueden descargarse durante la configuración inicial; la
   descarga no implica que el audio se envíe a un servicio remoto.
 

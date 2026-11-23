@@ -69,6 +69,10 @@ entorno virtual y las pruebas; así no copia preferencias ni datos personales
 desde la carpeta de desarrollo. Asegúrate de que `~/.local/bin` esté en tu
 `PATH`.
 
+El instalador coloca el lanzador x86_64 en la ruta interna que espera el
+bootstrap. Para reconstruirlo desde el código fuente, ejecuta
+`./scripts/build_launcher.sh` en una máquina Linux x86_64 con compilador C.
+
 Variables opcionales:
 
 - `JARVIS_INSTALL_DIR`: carpeta de instalación.

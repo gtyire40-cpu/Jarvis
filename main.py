@@ -16,8 +16,19 @@ def _confirm_cli(name, preview):
     answer = input(f"\n⚠️ Jarvis quiere ejecutar {preview}. ¿Confirmas? [s/N] ").strip().lower()
     return answer in ("s", "si", "sí", "y", "yes")
 
+def _confirm_external(name, destination, disclosure):
+    print(f"\n⚠️ {name} enviará datos a: {destination}")
+    print("Contenido que se enviará:")
+    print(disclosure)
+    answer = input("¿Autorizar este envío? [s/N] ").strip().lower()
+    return answer in ("s", "si", "sí", "y", "yes")
+
 def build_agent(confirm_callback=None):
-    return Agent(ToolManager(SecurityManager(), confirm_callback or _confirm_cli))
+    return Agent(ToolManager(
+        SecurityManager(),
+        confirm_callback or _confirm_cli,
+        privacy_callback=_confirm_external,
+    ))
 
 def _cargar_conversacion():
     return [{"role":"system", "content":config.SYSTEM_PROMPT}, *memory.cargar_historial()]
