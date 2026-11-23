@@ -77,7 +77,7 @@ def _execute_tool_calls(messages, tool_calls, manager):
         manager.last_run["tool_call_count"] += 1
 
         # Ollama trabaja con mensajes role=tool; no añadimos campos OpenAI que
-        # algunas versiones de Ollama no necesitan y que podrían romper compatibilidad.
+        # Algunos servidores Ollama no necesitan campos adicionales de OpenAI.
         messages.append({
             "role": "tool",
             "content": json.dumps(result, ensure_ascii=False, default=str),

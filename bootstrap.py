@@ -9,25 +9,10 @@ import urllib.request
 import venv
 from pathlib import Path
 
-def _read_version() -> str:
-    try:
-        v = (Path(__file__).resolve().parent / "VERSION").read_text(encoding="utf-8").strip()
-        if v: return v
-    except OSError:
-        pass
-    return "3.6.2"
-
-
-VERSION = _read_version()
 ROOT = Path(__file__).resolve().parent
 VENV = ROOT / ".venv"
 PY = VENV / "bin" / "python"
-# El sello de dependencias instaladas se ata a VERSION: si se publica una
-# versión nueva que añade dependencias, el instalador vuelve a ejecutar
-# ensure_deps() automáticamente en vez de asumir "v362_ok" para siempre
-# (antes el sufijo estaba escrito a mano y quedaba desincronizado de VERSION
-# en cuanto se subía de versión sin acordarse de tocar esta constante).
-STAMP = VENV / f".jarvis_deps_v{VERSION.replace('.', '_')}_ok"
+STAMP = VENV / ".jarvis_deps_ok"
 LOG = Path.home() / ".jarvis" / "bootstrap.log"
 VOICE_DIR = ROOT / "resources" / "voices"
 VOICE_NAME = "es_ES-davefx-medium.onnx"
@@ -54,7 +39,7 @@ class UI:
             import tkinter as tk
             self.tk = tk
             W, H = 640, 400
-            self.root = tk.Tk(); self.root.title(f"JARVIS LOCAL — INSTALACIÓN {VERSION}"); self.root.geometry(f"{W}x{H}"); self.root.resizable(False, False); self.root.configure(bg=BG)
+            self.root = tk.Tk(); self.root.title("JARVIS LOCAL — INSTALACIÓN"); self.root.geometry(f"{W}x{H}"); self.root.resizable(False, False); self.root.configure(bg=BG)
             self.root.protocol("WM_DELETE_WINDOW", lambda: None)
             self.canvas = tk.Canvas(self.root, width=W, height=H, bg=BG, highlightthickness=0); self.canvas.pack(fill="both", expand=True)
 
@@ -63,7 +48,7 @@ class UI:
 
             cx = W / 2
             self.canvas.create_text(cx, 54, text="J A R V I S", fill=TEXT, font=("Segoe UI", 22, "bold"))
-            self.canvas.create_text(cx, 78, text=f"LOCAL INTELLIGENCE SYSTEM · v{VERSION}", fill=MUTED, font=("Consolas", 8, "bold"))
+            self.canvas.create_text(cx, 78, text="LOCAL INTELLIGENCE SYSTEM", fill=MUTED, font=("Consolas", 8, "bold"))
 
             ring_cy = 170
             self.canvas.create_oval(cx - 100, ring_cy - 100, cx + 100, ring_cy + 100, outline="#122640", width=1)

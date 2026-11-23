@@ -24,7 +24,7 @@ def _cargar_conversacion():
 
 def modo_texto(model=None, ollama_url=None):
     memory.init_db(); scheduler.start(); messages = _cargar_conversacion(); agent = build_agent()
-    print("Jarvis Local v3.6.0 (texto). Escribe 'salir' para terminar.\n")
+    print("Jarvis Local (texto). Escribe 'salir' para terminar.\n")
     while True:
         try: entrada = input("Tú: ").strip()
         except (EOFError, KeyboardInterrupt): break
@@ -43,7 +43,7 @@ def modo_voz(usar_wakeword=True, model=None, ollama_url=None):
     import stt
     import tts
     memory.init_db(); scheduler.start(); messages = _cargar_conversacion(); agent = build_agent()
-    print("Jarvis Local v3.6.0 (voz). Ctrl+C para salir.\n")
+    print("Jarvis Local (voz). Ctrl+C para salir.\n")
     wakeword = None
     if usar_wakeword:
         import wakeword as _wakeword

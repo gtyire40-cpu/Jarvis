@@ -1,4 +1,4 @@
-"""Interfaz gráfica Jarvis Local — HUD tecnológico, rediseño 3.7.
+"""Interfaz gráfica Jarvis Local — HUD tecnológico.
 
 Cambios de esta versión respecto al diseño anterior:
 - Paleta y componentes redondeados (paneles, burbujas de chat, botones,
@@ -8,7 +8,7 @@ Cambios de esta versión respecto al diseño anterior:
 - Paleta de comandos "/" (buscar, analizar, investigar, planificar,
   verificar, profundo, ejecutar, rápido) y selector de "Modo" persistente,
   ambos inyectan una instrucción de sistema real para el turno correspondiente.
-- Barra superior con título/versión leída de VERSION y estado en vivo.
+- Barra superior con estado en vivo.
 - Estadísticas de sistema en vivo en la barra lateral (GPU/CPU/RAM).
 - Corrige un bug de concurrencia real: los diálogos de confirmación
   (`messagebox.askyesno`) y la actualización de widgets desde el hilo de voz
@@ -28,22 +28,6 @@ from core.security import SecurityManager
 from core.tool_manager import ToolManager
 
 SETTINGS_PATH = os.path.join(os.path.dirname(__file__), "settings.json")
-VERSION_PATH = os.path.join(os.path.dirname(__file__), "VERSION")
-
-
-def _read_version() -> str:
-    try:
-        with open(VERSION_PATH, encoding="utf-8") as f:
-            v = f.read().strip()
-            if v:
-                return v
-    except OSError:
-        pass
-    return "3.6.2"
-
-
-VERSION = _read_version()
-
 # ---------------------------------------------------------------- paleta --
 BG = "#060a12"; SIDEBAR = "#0a101b"; TOPBAR = "#080d17"; PANEL = "#0d1522"; PANEL_2 = "#121e30"
 CARD = "#101b2b"; BORDER = "#20314a"; BORDER_SOFT = "#182640"
@@ -269,7 +253,7 @@ class ChatFeed(tk.Frame):
 class JarvisGUI:
     def __init__(self, root):
         self.root = root
-        self.root.title(f"JARVIS LOCAL {VERSION}"); self.root.geometry("1360x820"); self.root.minsize(1060, 700); self.root.configure(bg=BG)
+        self.root.title("JARVIS LOCAL"); self.root.geometry("1360x820"); self.root.minsize(1060, 700); self.root.configure(bg=BG)
         self.settings = load_settings(); self.events = queue.Queue(); self.busy = False; self.listening = False
         self.voice_stop = threading.Event(); self.ready_event = threading.Event(); self.ready_event.set()
         self.mode = "Normal"; self.pending_directive = None
@@ -302,7 +286,7 @@ class JarvisGUI:
     def _build_topbar(self):
         bar = tk.Frame(self.root, bg=TOPBAR, height=34); bar.pack(fill="x"); bar.pack_propagate(False)
         tk.Frame(bar, bg=BORDER_SOFT, height=1).pack(side="bottom", fill="x")
-        tk.Label(bar, text=f"JARVIS LOCAL {VERSION}", bg=TOPBAR, fg=MUTED, font=(MONO, 9, "bold")).pack(side="left", padx=18)
+        tk.Label(bar, text="JARVIS LOCAL", bg=TOPBAR, fg=MUTED, font=(MONO, 9, "bold")).pack(side="left", padx=18)
         right = tk.Frame(bar, bg=TOPBAR); right.pack(side="right", padx=16)
         self.top_status_dot = tk.Canvas(right, width=9, height=9, bg=TOPBAR, highlightthickness=0); self.top_status_dot.pack(side="left", padx=(0, 6))
         self.top_status_dot.create_oval(1, 1, 8, 8, fill=SUCCESS, outline="")
@@ -499,7 +483,7 @@ class JarvisGUI:
             gd = gpu_runtime.diagnostics()
         except Exception as exc:
             gd = {"gpus": [], "recommended_backend": "cpu", "whisper_device": "cpu", "whisper_compute_type": "int8", "whisper_gpu_acceleration": False, "error": str(exc)}
-        lines = [f"JARVIS LOCAL {VERSION}", "", "HARDWARE / ACELERACIÓN"]
+        lines = ["JARVIS LOCAL", "", "HARDWARE / ACELERACIÓN"]
         gpus = gd.get("gpus", [])
         if not gpus:
             lines.append("GPU                  NO DETECTADA → CPU")
@@ -605,15 +589,41 @@ class JarvisGUI:
     def _save(self):
         try:
             s = self.setting_vars
+            temperature = float(s["temperature"].get())
+            max_iterations = int(s["max_tool_iterations"].get())
+            history_max = int(s["history_max"].get())
+            memory_recalls = int(s["memory_recalls"].get())
+            wake_threshold = float(s["wake_threshold"].get())
+            silence_seconds = float(s["silence_seconds"].get())
+            rms_threshold = float(s["rms_threshold"].get())
+            if not 0.0 <= temperature <= 2.0:
+                raise ValueError("La temperatura debe estar entre 0 y 2.")
+            if not 1 <= max_iterations <= 20:
+                raise ValueError("Los pasos máximos deben estar entre 1 y 20.")
+            if not 1 <= history_max <= 500:
+                raise ValueError("El historial debe tener entre 1 y 500 mensajes.")
+            if not 1 <= memory_recalls <= 50:
+                raise ValueError("Los recuerdos recuperados deben estar entre 1 y 50.")
+            if not 0.0 <= wake_threshold <= 1.0:
+                raise ValueError("El umbral wake word debe estar entre 0 y 1.")
+            if silence_seconds < 0.1 or silence_seconds > 10:
+                raise ValueError("El silencio debe estar entre 0.1 y 10 segundos.")
+            if not 0.001 <= rms_threshold <= 0.5:
+                raise ValueError("El umbral de voz no es válido.")
             self.settings.update({"model": s["model"].get().strip() or config.MODEL, "ollama_url": s["ollama_url"].get().strip() or config.OLLAMA_URL,
-                                   "temperature": float(s["temperature"].get()), "max_tool_iterations": int(s["max_tool_iterations"].get()),
-                                   "history_max": int(s["history_max"].get()), "memory_recalls": int(s["memory_recalls"].get()),
-                                   "whisper_model": s["whisper_model"].get().strip() or config.WHISPER_MODEL_SIZE, "wake_threshold": float(s["wake_threshold"].get()),
-                                   "silence_seconds": float(s["silence_seconds"].get()), "rms_threshold": float(s["rms_threshold"].get()),
+                                   "temperature": temperature, "max_tool_iterations": max_iterations,
+                                   "history_max": history_max, "memory_recalls": memory_recalls,
+                                   "whisper_model": s["whisper_model"].get().strip() or config.WHISPER_MODEL_SIZE, "wake_threshold": wake_threshold,
+                                   "silence_seconds": silence_seconds, "rms_threshold": rms_threshold,
                                    "memory_context": s["memory_context"].get(), "speak_responses": s["speak_responses"].get(),
                                    "continuous_voice": s["continuous_voice"].get(), "show_activity": s["show_activity"].get()})
             config.configure_runtime(self.settings["model"], self.settings["ollama_url"]); config.MAX_TOOL_ITERATIONS = self.settings["max_tool_iterations"]
             config.HISTORIAL_MENSAJES_MAX = self.settings["history_max"]; config.MEMORY_CONTEXT_RECALL = self.settings["memory_context"]; config.MEMORY_CONTEXT_MAX_RECALLS = self.settings["memory_recalls"]
+            config.TEMPERATURE = self.settings["temperature"]
+            config.WHISPER_MODEL_SIZE = self.settings["whisper_model"]
+            config.WAKE_WORD_THRESHOLD = self.settings["wake_threshold"]
+            config.VOICE_SILENCE_SECONDS = self.settings["silence_seconds"]
+            config.VOICE_RMS_THRESHOLD = self.settings["rms_threshold"]
             save_settings(self.settings); self.status.set("CONFIGURACIÓN GUARDADA"); self.side_status.set("CONFIGURADO"); self._activity("Configuración actualizada", "ok")
         except (ValueError, OSError) as exc:
             messagebox.showerror("Configuración", f"No se pudo guardar: {exc}", parent=self.root)

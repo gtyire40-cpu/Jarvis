@@ -4,7 +4,6 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "jarvis-local"
-version = "3.6.2"
 description = "Asistente personal local para Linux con control de escritorio, voz y herramientas verificables."
 readme = "README.md"
 requires-python = ">=3.12"

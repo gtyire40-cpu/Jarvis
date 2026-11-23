@@ -58,12 +58,6 @@ def init_db() -> None:
         """)
         _ensure_tool_execution_schema(conn)
         conn.execute("CREATE TABLE IF NOT EXISTS jarvis_meta (clave TEXT PRIMARY KEY, valor TEXT NOT NULL)")
-        row = conn.execute("SELECT valor FROM jarvis_meta WHERE clave='history_version'").fetchone()
-        if not row or row[0] != '360':
-            # La 3.4.0 puede contener respuestas simuladas de herramientas.
-            # Se limpia solo el historial conversacional; recuerdos persistentes se conservan.
-            conn.execute("DELETE FROM mensajes")
-            conn.execute("INSERT OR REPLACE INTO jarvis_meta (clave, valor) VALUES ('history_version','360')")
 
 
 # ---------------------------------------------------------------------------
@@ -302,7 +296,7 @@ with _conn() as _startup_conn:
     _ensure_tool_execution_schema(_startup_conn)
 
 # ---------------------------------------------------------------------------
-# Tareas persistentes V3.1
+# Tareas persistentes
 # ---------------------------------------------------------------------------
 
 def _ensure_tasks_schema(conn):

@@ -78,7 +78,12 @@ def grabar_hasta_silencio_y_transcribir(max_seconds: float = None, silence_secon
     silent = 0
     started_at = time.monotonic()
     print("Voz️ Esperando voz...")
-    with sd.InputStream(samplerate=SAMPLE_RATE, channels=1, dtype="int16", blocksize=blocksize) as stream:
+    try:
+        stream = sd.InputStream(samplerate=SAMPLE_RATE, channels=1, dtype="int16", blocksize=blocksize)
+        stream.start()
+    except Exception as exc:
+        raise RuntimeError(f"No pude iniciar el microfono: {exc}") from exc
+    try:
         for _ in range(max_blocks):
             block, _ = stream.read(blocksize)
             block = block.reshape(-1).copy()
@@ -106,6 +111,9 @@ def grabar_hasta_silencio_y_transcribir(max_seconds: float = None, silence_secon
 
             if time.monotonic() - started_at >= max_seconds:
                 break
+    finally:
+        stream.stop()
+        stream.close()
 
     if not frames:
         return ""

@@ -38,7 +38,7 @@ PIPER_BINARY = os.getenv("JARVIS_PIPER_BINARY", str(PROJECT_DIR / ".venv" / "bin
 PIPER_VOICE_MODEL = os.getenv("JARVIS_PIPER_VOICE", str(APP_DIR / "resources" / "voices" / "es_ES-davefx-medium.onnx"))
 PIPER_AUDIO_PLAYER = os.getenv("JARVIS_AUDIO_PLAYER", "auto")
 
-DB_PATH = os.getenv("JARVIS_DB_PATH", str(DATA_DIR / "jarvis_v3_6.db"))
+DB_PATH = os.getenv("JARVIS_DB_PATH", str(DATA_DIR / "jarvis.db"))
 HISTORIAL_MENSAJES_MAX = int(os.getenv("JARVIS_HISTORY_MAX", "40"))
 WAKE_WORD_MODEL = os.getenv("JARVIS_WAKE_WORD_MODEL", "hey_jarvis")
 WAKE_WORD_THRESHOLD = float(os.getenv("JARVIS_WAKE_WORD_THRESHOLD", "0.5"))
