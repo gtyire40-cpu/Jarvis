@@ -1,13 +1,3 @@
-[build-system]
-requires = ["setuptools>=68"]
-build-backend = "setuptools.build_meta"
-
-[project]
-name = "jarvis-local"
-description = "Asistente personal local para Linux con control de escritorio, voz y herramientas verificables."
-readme = "README.md"
-requires-python = ">=3.12"
-
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 python_files = ["test_*.py"]

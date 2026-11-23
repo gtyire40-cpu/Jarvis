@@ -7,7 +7,16 @@ BIN_DIR="${JARVIS_BIN_DIR:-$HOME/.local/bin}"
 DESKTOP_DIR="${XDG_DATA_HOME:-$HOME/.local/share}/applications"
 ICON_DIR="${XDG_DATA_HOME:-$HOME/.local/share}/icons/hicolor/256x256/apps"
 mkdir -p "$INSTALL_DIR" "$BIN_DIR" "$DESKTOP_DIR" "$ICON_DIR"
-rsync -a --delete --exclude '.venv/' --exclude '__pycache__/' --exclude '*.pyc' --exclude '.env' --exclude 'tests/' "$PROJECT_DIR/" "$INSTALL_DIR/"
+rsync -a --delete \
+  --exclude '.venv/' \
+  --exclude '__pycache__/' \
+  --exclude '*.pyc' \
+  --exclude '.env' \
+  --exclude 'settings.json' \
+  --exclude 'data/' \
+  --exclude 'logs/' \
+  --exclude 'tests/' \
+  "$PROJECT_DIR/" "$INSTALL_DIR/"
 cat > "$BIN_DIR/jarvis" <<EOF
 #!/usr/bin/env bash
 exec "$INSTALL_DIR/executable_x86_64/jarvis-local.x86_64" "\$@"

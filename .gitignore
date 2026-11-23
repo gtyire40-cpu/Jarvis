@@ -8,6 +8,7 @@ htmlcov/
 
 /data/
 /logs/
+/settings.json
 /dist/*.legacy
 dist/executable_x86_64/*.legacy
 *.db
