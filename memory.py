@@ -143,7 +143,7 @@ def agendar_evento(titulo: str, fecha: str, hora: str = "", descripcion: str = "
     return f"Evento agendado: '{titulo}' el {fecha}" + (f" a las {hora}" if hora else "")
 
 
-def listar_eventos(fecha: str = None) -> str:
+def listar_eventos(fecha: str | None = None) -> str:
     with _conn() as conn:
         if fecha:
             rows = conn.execute(

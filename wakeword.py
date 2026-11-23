@@ -3,12 +3,17 @@ Palabra de activación ("Hey Jarvis") usando openWakeWord.
 Escucha continuamente el micrófono en segundo plano hasta detectar la palabra clave.
 """
 
+import importlib
 import numpy as np
-import sounddevice as sd
+from typing import Any, Callable
+
+_ModelFactory: Callable[..., Any] | None = None
 try:
-    from openwakeword.model import Model
-except ImportError:
-    Model = None
+    _ModelFactory = importlib.import_module("openwakeword.model").Model
+except ImportError as exc:
+    _OPENWAKEWORD_IMPORT_ERROR = exc
+else:
+    _OPENWAKEWORD_IMPORT_ERROR = None
 
 import config
 
@@ -17,16 +22,34 @@ FRAME_SAMPLES = 1280  # 80ms a 16kHz, tamaño que espera openWakeWord
 _model = None
 
 
+def _get_sounddevice():
+    try:
+        import sounddevice
+        return sounddevice
+    except (ImportError, OSError) as exc:
+        raise RuntimeError(
+            "El audio de entrada no está disponible: falta PortAudio. "
+            "Instala la biblioteca de audio del sistema para usar la palabra "
+            "de activación."
+        ) from exc
+
+
 def _get_model():
     global _model
     if _model is None:
+        if _ModelFactory is None:
+            raise RuntimeError(
+                "La detección de palabra de activación requiere openwakeword. "
+                "Instala una versión compatible con tu Python o usa --sin-wakeword."
+            ) from _OPENWAKEWORD_IMPORT_ERROR
         print("[wakeword] Cargando modelo de palabra de activación...")
-        _model = Model(wakeword_models=[config.WAKE_WORD_MODEL])
+        _model = _ModelFactory(wakeword_models=[config.WAKE_WORD_MODEL])
     return _model
 
 
 def esperar_palabra_activacion(cancel_event=None) -> bool:
     """Bloquea hasta que se detecta 'hey jarvis' en el micrófono."""
+    sd = _get_sounddevice()
     model = _get_model()
     print(f'Escucha Esperando "hey jarvis"...')
 

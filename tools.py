@@ -1,7 +1,20 @@
 """Herramientas seguras y comprobables de Jarvis para Linux."""
-import logging, os, shutil, subprocess, webbrowser, imaplib, smtplib, email as email_lib, time, socket
+import configparser
+import logging
+import os
+import re
+import shlex
+import shutil
+import subprocess
+import webbrowser
+import imaplib
+import smtplib
+import email as email_lib
+import time
+import socket
 from datetime import datetime
 from email.mime.text import MIMEText
+from pathlib import Path
 import requests
 from core.browser_agent import BROWSER
 from urllib.parse import urlparse
@@ -9,6 +22,11 @@ import ipaddress
 import config, memory
 
 logger=logging.getLogger(__name__)
+
+class _DesktopEntryParser(configparser.ConfigParser):
+    def optionxform(self, optionstr: str) -> str:
+        return optionstr
+
 
 def _resolve_executable(nombre):
     aliases={"librewolf":"librewolf", "calculadora":"gnome-calculator", "terminal":"gnome-terminal", "youtube":"xdg-open"}
@@ -20,6 +38,228 @@ def _resolve_executable(nombre):
     if nombre=="steam": candidates=[os.path.join(home,".steam","debian-installation","steam.sh"),*candidates]
     return next((p for p in candidates if os.path.isfile(p) and os.access(p,os.X_OK)),None)
 
+def _application_dirs():
+    data_home = Path(os.environ.get("XDG_DATA_HOME", Path.home() / ".local" / "share"))
+    data_dirs = os.environ.get("XDG_DATA_DIRS", "/usr/local/share:/usr/share").split(os.pathsep)
+    roots = [
+        data_home / "applications",
+        *(Path(path) / "applications" for path in data_dirs if path),
+        Path("/var/lib/snapd/desktop/applications"),
+        data_home / "flatpak" / "exports" / "share" / "applications",
+        Path("/var/lib/flatpak/exports/share/applications"),
+    ]
+    seen = set()
+    unique = []
+    for path in roots:
+        if str(path) not in seen:
+            seen.add(str(path))
+            unique.append(path)
+    return unique
+
+
+def _read_desktop_entry(path, root):
+    parser = _DesktopEntryParser(interpolation=None, strict=False)
+    try:
+        parser.read(path, encoding="utf-8")
+        entry = parser["Desktop Entry"]
+    except (OSError, KeyError, configparser.Error, UnicodeError):
+        return None
+
+    if entry.get("Type", "Application") != "Application":
+        return None
+    try:
+        if entry.getboolean("Hidden", fallback=False) or entry.getboolean("NoDisplay", fallback=False):
+            return None
+    except ValueError:
+        logger.warning("Entrada .desktop con booleano inválido: %s", path)
+        return None
+
+    name = next(
+        (entry[key] for key in ("Name[es_ES]", "Name[es]", "Name") if key in entry),
+        "",
+    ).strip()
+    command = entry.get("Exec", "").strip()
+    if not name or not command:
+        return None
+    try:
+        exec_parts = shlex.split(command)
+    except ValueError:
+        return None
+    if not exec_parts:
+        return None
+
+    executable = exec_parts[0]
+    if executable == "env":
+        executable = next(
+            (part for part in exec_parts[1:] if not part.startswith("-") and "=" not in part),
+            "",
+        )
+    flatpak_id = entry.get("X-Flatpak", "").strip()
+    if Path(executable).name == "flatpak" and not flatpak_id:
+        flatpak_id = next(
+            (
+                part for part in reversed(exec_parts)
+                if re.fullmatch(r"[A-Za-z0-9_-]+(?:\.[A-Za-z0-9_-]+)+", part)
+            ),
+            "",
+        )
+    try_exec = entry.get("TryExec", "").strip()
+    if try_exec and not (shutil.which(try_exec) or Path(try_exec).is_file()):
+        return None
+
+    try:
+        desktop_id = path.relative_to(root).as_posix().replace("/", "-")
+    except ValueError:
+        desktop_id = path.name
+    return {
+        "name": name,
+        "id": desktop_id.removesuffix(".desktop"),
+        "path": str(path),
+        "exec": command,
+        "executable": executable,
+        "icon": entry.get("Icon", ""),
+        "working_directory": entry.get("Path", ""),
+        "terminal": entry.getboolean("Terminal", fallback=False),
+        "flatpak_id": flatpak_id,
+    }
+
+
+def _installed_applications():
+    applications = {}
+    for root in _application_dirs():
+        if not root.is_dir():
+            continue
+        try:
+            paths = sorted(root.rglob("*.desktop"))
+        except OSError:
+            continue
+        for path in paths:
+            if path.is_symlink() and not path.exists():
+                continue
+            item = _read_desktop_entry(path, root)
+            if item:
+                applications.setdefault(item["id"].casefold(), item)
+    return sorted(applications.values(), key=lambda item: item["name"].casefold())
+
+
+def _normalise_app_name(value):
+    return re.sub(r"[^a-z0-9]+", "", (value or "").casefold())
+
+
+def _find_application(name):
+    query = (name or "").strip()
+    if not query:
+        raise ValueError("Debes indicar el nombre de una aplicación.")
+    normalized = _normalise_app_name(query)
+    applications = _installed_applications()
+    exact = [
+        app for app in applications
+        if normalized in {
+            _normalise_app_name(app["name"]),
+            _normalise_app_name(app["id"]),
+            _normalise_app_name(Path(app["executable"]).name),
+            _normalise_app_name(app.get("flatpak_id", "")),
+        }
+    ]
+    if len(exact) == 1:
+        return exact[0]
+    if len(exact) > 1:
+        names = ", ".join(app["name"] for app in exact[:5])
+        raise ValueError(f"El nombre '{query}' coincide con varias aplicaciones: {names}.")
+
+    matches = [
+        app for app in applications
+        if normalized and (
+            normalized in _normalise_app_name(app["name"])
+            or normalized in _normalise_app_name(app["id"])
+            or normalized in _normalise_app_name(app.get("flatpak_id", ""))
+        )
+    ]
+    if len(matches) == 1:
+        return matches[0]
+    if len(matches) > 1:
+        names = ", ".join(app["name"] for app in matches[:5])
+        raise ValueError(f"El nombre '{query}' es ambiguo. Coincidencias: {names}.")
+    legacy_name = next(
+        (app for app in config.ALLOWED_APPS if _normalise_app_name(app) == normalized),
+        None,
+    )
+    if legacy_name:
+        executable = _resolve_executable(legacy_name)
+        if executable:
+            return {
+                "name": legacy_name,
+                "id": legacy_name,
+                "path": "",
+                "exec": shlex.quote(executable),
+                "executable": executable,
+                "icon": "",
+                "working_directory": "",
+                "terminal": False,
+                "flatpak_id": "",
+            }
+    raise FileNotFoundError(
+        f"No encontré '{query}' entre las aplicaciones gráficas instaladas. "
+        "Pide listar_aplicaciones_permitidas para ver los nombres disponibles."
+    )
+
+
+def _desktop_exec_argv(application):
+    try:
+        parts = shlex.split(application["exec"])
+    except ValueError as exc:
+        raise ValueError(f"El lanzador de {application['name']} no es válido.") from exc
+
+    argv = []
+    field_codes = re.compile(r"%(?:[fFuUdDnNvm])")
+    for part in parts:
+        if part == "%i":
+            if application["icon"]:
+                argv.extend(("--icon", application["icon"]))
+            continue
+        if part in {"%f", "%F", "%u", "%U", "%d", "%D", "%n", "%N", "%v", "%m"}:
+            continue
+        part = part.replace("%%", "\0")
+        part = part.replace("%c", application["name"]).replace("%k", application["path"])
+        part = field_codes.sub("", part).replace("\0", "%")
+        if part:
+            argv.append(part)
+    if not argv:
+        raise ValueError(f"El lanzador de {application['name']} no contiene un comando.")
+    return argv
+
+
+def _launch_application(application):
+    launcher = shutil.which("gtk-launch")
+    if launcher:
+        subprocess.Popen(
+            [launcher, application["id"]],
+            stdin=subprocess.DEVNULL,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            start_new_session=True,
+        )
+        return
+
+    argv = _desktop_exec_argv(application)
+    working_directory = application["working_directory"]
+    cwd = working_directory if working_directory and os.path.isdir(working_directory) else None
+    if application["terminal"]:
+        terminal = shutil.which("x-terminal-emulator") or shutil.which("gnome-terminal")
+        if not terminal:
+            raise RuntimeError(
+                f"{application['name']} necesita un emulador de terminal y no hay ninguno instalado."
+            )
+        argv = [terminal, "-e", *argv]
+    subprocess.Popen(
+        argv,
+        cwd=cwd,
+        stdin=subprocess.DEVNULL,
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+        start_new_session=True,
+    )
+
 def _validate_safe_path(path, must_exist=False):
     base=os.path.realpath(os.path.expanduser(config.HOME_DIR)); target=os.path.realpath(os.path.expanduser(path or base))
     if os.path.commonpath([base,target])!=base: raise ValueError(f"Ruta fuera del espacio permitido: {path}")
@@ -27,32 +267,94 @@ def _validate_safe_path(path, must_exist=False):
     return target
 
 def abrir_aplicacion(nombre):
-    app=(nombre or "").strip().lower()
-    if not app: raise ValueError("Debes indicar la aplicación.")
-    if app not in config.ALLOWED_APPS: raise PermissionError(f"Aplicación no permitida: '{nombre}'.")
-    exe=_resolve_executable(app)
-    if not exe: raise FileNotFoundError(f"No encuentro '{app}'.")
-    subprocess.Popen([exe],stdout=subprocess.DEVNULL,stderr=subprocess.DEVNULL,start_new_session=True)
-    return f"Aplicación '{app}' lanzada."
+    app = _find_application(nombre)
+    _launch_application(app)
+    return f"He iniciado {app['name']}."
 
 def comprobar_aplicacion(nombre):
-    app=(nombre or "").strip().lower(); exe=_resolve_executable(app)
-    if not exe: return f"'{app}' no está disponible."
-    try: out=subprocess.run(["pgrep","-x",os.path.basename(exe)],capture_output=True,text=True).returncode==0
-    except OSError: out=False
-    return f"'{app}' está {'ejecutándose' if out else 'instalada pero no parece estar ejecutándose'}."
+    app = _find_application(nombre)
+    if app["flatpak_id"]:
+        flatpak = shutil.which("flatpak")
+        if not flatpak:
+            return f"{app['name']} está instalada, pero no se encuentra el cliente Flatpak."
+        try:
+            result = subprocess.run(
+                [flatpak, "ps", "--columns=application"],
+                capture_output=True,
+                text=True,
+                check=True,
+                timeout=5,
+            )
+        except (OSError, subprocess.SubprocessError) as exc:
+            raise RuntimeError(f"No pude consultar el estado de {app['name']}: {exc}") from exc
+        running = app["flatpak_id"] in {
+            line.strip() for line in result.stdout.splitlines()
+        }
+        return f"{app['name']} está instalada y {'está ejecutándose' if running else 'no parece estar ejecutándose'}."
+
+    executable = Path(app["executable"]).name
+    try:
+        running = subprocess.run(
+            ["pgrep", "-x", executable],
+            capture_output=True,
+            text=True,
+            check=False,
+            timeout=5,
+        ).returncode == 0
+    except (OSError, subprocess.SubprocessError):
+        running = False
+    return f"{app['name']} está instalada y {'está ejecutándose' if running else 'no parece estar ejecutándose'}."
 
 def cerrar_aplicacion(nombre):
-    app=(nombre or "").strip().lower()
-    if app not in config.ALLOWED_APPS: raise PermissionError(f"Aplicación no permitida: '{nombre}'.")
-    exe=_resolve_executable(app)
-    if not exe: raise FileNotFoundError(app)
-    subprocess.run(["pkill","-x",os.path.basename(exe)],check=False)
-    return f"Solicitud de cierre enviada a '{app}'."
+    app = _find_application(nombre)
+    if app["executable"] and Path(app["executable"]).name == "flatpak":
+        flatpak = shutil.which("flatpak")
+        if not flatpak or not app["flatpak_id"]:
+            raise RuntimeError(f"No pude identificar de forma segura la instancia Flatpak de {app['name']}.")
+        try:
+            result = subprocess.run(
+                [flatpak, "kill", app["flatpak_id"]],
+                capture_output=True,
+                text=True,
+                check=False,
+                timeout=10,
+            )
+        except (OSError, subprocess.SubprocessError) as exc:
+            raise RuntimeError(f"No pude cerrar {app['name']}: {exc}") from exc
+        if result.returncode:
+            return f"{app['name']} no parece estar ejecutándose."
+        return f"Solicitud de cierre enviada a {app['name']}."
 
-def listar_aplicaciones_permitidas():
-    installed=[a for a in sorted(config.ALLOWED_APPS) if _resolve_executable(a)]
-    return "Aplicaciones disponibles: "+", ".join(installed)+"." if installed else "No hay aplicaciones permitidas instaladas."
+    executable = Path(app["executable"]).name
+    if not executable:
+        raise RuntimeError(f"No pude identificar el proceso de {app['name']}.")
+    try:
+        result = subprocess.run(
+            ["pkill", "-x", "-u", str(os.getuid()), executable],
+            capture_output=True,
+            text=True,
+            check=False,
+            timeout=5,
+        )
+    except (OSError, subprocess.SubprocessError) as exc:
+        raise RuntimeError(f"No pude cerrar {app['name']}: {exc}") from exc
+    if result.returncode == 1:
+        return f"{app['name']} no parece estar ejecutándose."
+    if result.returncode != 0:
+        raise RuntimeError(f"No pude cerrar {app['name']}: {result.stderr.strip()}")
+    return f"Solicitud de cierre enviada a {app['name']}."
+
+def listar_aplicaciones_permitidas(filtro=""):
+    query = _normalise_app_name(filtro)
+    installed = [
+        app["name"] for app in _installed_applications()
+        if not query or query in _normalise_app_name(app["name"]) or query in _normalise_app_name(app["id"])
+    ]
+    if not installed:
+        return "No encontré aplicaciones gráficas instaladas que coincidan."
+    shown = installed[:100]
+    suffix = f"\nSe muestran las primeras 100 de {len(installed)}." if len(installed) > 100 else ""
+    return "Aplicaciones gráficas instaladas: " + ", ".join(shown) + suffix
 
 def _url_publica(url):
     parsed=urlparse(url)
@@ -216,8 +518,21 @@ def leer_correos(cantidad=5):
         lines=[]
         for mid in reversed(ids):
             st,msg_data=imap.fetch(mid,"(RFC822)")
-            if st!="OK" or not msg_data: continue
-            raw=msg_data[0][1]; msg=email_lib.message_from_bytes(raw)
+            if st!="OK":
+                raise RuntimeError("No pude descargar uno de los correos sin leer.")
+            raw = next(
+                (
+                    response[1]
+                    for response in msg_data or []
+                    if isinstance(response, tuple)
+                    and len(response) > 1
+                    and isinstance(response[1], bytes)
+                ),
+                None,
+            )
+            if raw is None:
+                raise RuntimeError("El servidor devolvió un correo con formato inesperado.")
+            msg=email_lib.message_from_bytes(raw)
             lines.append(f"- {msg.get('From','desconocido')} — {msg.get('Subject','(sin asunto)')}")
         return "Correos sin leer:\n"+"\n".join(lines)
     finally: imap.logout()
@@ -255,15 +570,18 @@ def navegador_cerrar():
 def obtener_fecha_hora(): return datetime.now().strftime("%A %d/%m/%Y, %H:%M:%S")
 
 def uso_ram():
-    try:
-        import psutil
-        vm=psutil.virtual_memory()
-        return f"RAM en uso: {vm.used/(1024**3):.1f} GB ({vm.percent:.1f}%)."
-    except Exception:
-        with open("/proc/meminfo",encoding="utf-8") as f: vals={k:int(v.split()[0]) for k,v in (line.split(":",1) for line in f if ":" in line)}
-        total=vals.get("MemTotal",0); avail=vals.get("MemAvailable",0); used=total-avail
-        pct=(used/total*100) if total else 0
-        return f"RAM en uso: {used/1024/1024:.1f} GB ({pct:.1f}%)."
+    with open("/proc/meminfo",encoding="utf-8") as f:
+        vals = {
+            key: int(value.split()[0])
+            for key, value in (line.split(":", 1) for line in f if ":" in line)
+        }
+    total = vals.get("MemTotal", 0)
+    if not total:
+        raise RuntimeError("No pude determinar la memoria total del sistema.")
+    available = vals.get("MemAvailable", 0)
+    used = total - available
+    pct = used / total * 100
+    return f"RAM en uso: {used/1024/1024:.1f} GB ({pct:.1f}%)."
 
 def estado_sistema():
     try:
@@ -289,17 +607,17 @@ def espacio_libre_disco():
     return f"Espacio libre en el disco principal: {d.free/(1024**3):.1f} GB."
 
 def agendar_evento(titulo,fecha,hora="",descripcion=""): return memory.agendar_evento(titulo,fecha,hora,descripcion)
-def listar_eventos(fecha=None): return memory.listar_eventos(fecha)
+def listar_eventos(fecha: str | None = None): return memory.listar_eventos(fecha)
 
 DISPATCH={"abrir_aplicacion":abrir_aplicacion, "crear_carpeta":crear_carpeta,"comprobar_aplicacion":comprobar_aplicacion,"cerrar_aplicacion":cerrar_aplicacion,"listar_aplicaciones_permitidas":listar_aplicaciones_permitidas,"buscar_en_web":buscar_en_web,"leer_pagina_web":leer_pagina_web,"abrir_url":abrir_url,"buscar_archivos":buscar_archivos,"listar_archivos":listar_archivos,"leer_archivo":leer_archivo,"crear_archivo":crear_archivo,"modificar_archivo":modificar_archivo,"eliminar_archivo":eliminar_archivo,"controlar_volumen":controlar_volumen,"controlar_musica":controlar_musica,"enviar_correo":enviar_correo,"leer_correos":leer_correos,"obtener_fecha_hora":obtener_fecha_hora,"estado_sistema":estado_sistema, "espacio_libre_disco":espacio_libre_disco, "uso_ram":uso_ram,"agendar_evento":agendar_evento,"listar_eventos":listar_eventos,"navegador_abrir":navegador_abrir,"navegador_atras":navegador_atras,"navegador_click_texto":navegador_click_texto,"navegador_click_role":navegador_click_role,"navegador_escribir":navegador_escribir,"navegador_tecla":navegador_tecla,"navegador_extraer":navegador_extraer,"navegador_estado":navegador_estado,"navegador_cerrar":navegador_cerrar}
 
 def _schema(name,desc,props=None,required=None):
     return {"type":"function","function":{"name":name,"description":desc,"parameters":{"type":"object","properties":props or {},"required":required or []}}}
 TOOL_SCHEMAS=[
- _schema("abrir_aplicacion","Abre una aplicación de la lista permitida.",{"nombre":{"type":"string"}},["nombre"]),
+ _schema("abrir_aplicacion","Abre cualquier aplicación gráfica instalada y visible en el menú del sistema.",{"nombre":{"type":"string"}},["nombre"]),
  _schema("comprobar_aplicacion","Comprueba si una aplicación está disponible y parece ejecutándose.",{"nombre":{"type":"string"}},["nombre"]),
- _schema("cerrar_aplicacion","Cierra una aplicación permitida; requiere confirmación.",{"nombre":{"type":"string"}},["nombre"]),
- _schema("listar_aplicaciones_permitidas","Lista aplicaciones permitidas e instaladas."),
+ _schema("cerrar_aplicacion","Cierra una aplicación instalada del usuario actual; requiere confirmación.",{"nombre":{"type":"string"}},["nombre"]),
+ _schema("listar_aplicaciones_permitidas","Lista las aplicaciones gráficas instaladas; admite un filtro opcional.",{"filtro":{"type":"string"}}),
  _schema("buscar_en_web","Busca en la web y devuelve varios resultados con título, URL y fragmento.",{"consulta":{"type":"string"},"cantidad":{"type":"integer"}},["consulta"]),
  _schema("leer_pagina_web","Descarga una página pública y extrae su texto para analizarla.",{"url":{"type":"string"},"max_chars":{"type":"integer"}},["url"]),
  _schema("abrir_url","Abre una URL pública en el navegador.",{"url":{"type":"string"}},["url"]),

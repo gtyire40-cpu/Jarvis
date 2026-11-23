@@ -1,7 +1,9 @@
 from core.security import SecurityManager
 import json
 import subprocess
+import tempfile
 import threading
+from pathlib import Path
 
 import pytest
 
@@ -13,6 +15,7 @@ from core import ollama_transport
 from core.planner import make_plan
 from core.privacy import is_local_endpoint, ollama_disclosure, tool_disclosure
 from core.tool_manager import ToolManager
+from core.verifier import Verifier
 
 
 def test_dispatch_schema_and_policy_are_consistent():
@@ -267,3 +270,149 @@ def test_tts_cancellation_terminates_voice_synthesis(monkeypatch):
 
     assert tts.hablar("respuesta", cancel_event=cancelled) is None
     assert process.terminated
+
+
+def test_desktop_menu_applications_are_discovered_and_filtered(monkeypatch, tmp_path):
+    applications = tmp_path / "applications"
+    applications.mkdir()
+    (applications / "sample.desktop").write_text(
+        "[Desktop Entry]\n"
+        "Type=Application\n"
+        "Name=Sample Editor\n"
+        "Name[es]=Editor de prueba\n"
+        "Exec=/usr/bin/sample-editor %U\n"
+        "Icon=sample-editor\n",
+        encoding="utf-8",
+    )
+    (applications / "hidden.desktop").write_text(
+        "[Desktop Entry]\nType=Application\nName=Hidden App\nExec=hidden-app\nNoDisplay=true\n",
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(tools, "_application_dirs", lambda: [applications])
+
+    discovered = tools._installed_applications()
+    assert [app["name"] for app in discovered] == ["Editor de prueba"]
+    assert tools.listar_aplicaciones_permitidas("editor") == "Aplicaciones gráficas instaladas: Editor de prueba"
+    assert tools._find_application("sample editor")["id"] == "sample"
+
+
+def test_any_discovered_desktop_app_can_launch_without_allowlist(monkeypatch, tmp_path):
+    applications = tmp_path / "applications"
+    applications.mkdir()
+    (applications / "unlisted.desktop").write_text(
+        "[Desktop Entry]\n"
+        "Type=Application\n"
+        "Name=Unlisted App\n"
+        "Exec=/usr/bin/unlisted-app --title=%c %U\n",
+        encoding="utf-8",
+    )
+    calls = []
+    monkeypatch.setattr(tools, "_application_dirs", lambda: [applications])
+    monkeypatch.setattr(tools.shutil, "which", lambda _name: None)
+    monkeypatch.setattr(tools.subprocess, "Popen", lambda args, **kwargs: calls.append((args, kwargs)))
+    monkeypatch.setattr(config, "ALLOWED_APPS", set())
+
+    result = tools.abrir_aplicacion("Unlisted App")
+    assert result == "He iniciado Unlisted App."
+    assert calls[0][0] == ["/usr/bin/unlisted-app", "--title=Unlisted App"]
+    assert "shell" not in calls[0][1]
+
+
+def test_flatpak_apps_are_checked_and_closed_by_exact_app_id(monkeypatch, tmp_path):
+    applications = tmp_path / "applications"
+    applications.mkdir()
+    (applications / "com.example.Editor.desktop").write_text(
+        "[Desktop Entry]\n"
+        "Type=Application\n"
+        "Name=Example Editor\n"
+        "Exec=flatpak run --branch=stable --arch=x86_64 com.example.Editor\n",
+        encoding="utf-8",
+    )
+    calls = []
+
+    def fake_run(args, **kwargs):
+        calls.append(args)
+        return subprocess.CompletedProcess(args, 0, "Application\ncom.example.Editor\n", "")
+
+    monkeypatch.setattr(tools, "_application_dirs", lambda: [applications])
+    monkeypatch.setattr(tools.shutil, "which", lambda name: "/usr/bin/flatpak" if name == "flatpak" else None)
+    monkeypatch.setattr(tools.subprocess, "run", fake_run)
+
+    app = tools._find_application("com.example.Editor")
+    assert app["flatpak_id"] == "com.example.Editor"
+    assert "está ejecutándose" in tools.comprobar_aplicacion("Example Editor")
+    assert tools.cerrar_aplicacion("Example Editor") == "Solicitud de cierre enviada a Example Editor."
+    assert calls == [
+        ["/usr/bin/flatpak", "ps", "--columns=application"],
+        ["/usr/bin/flatpak", "kill", "com.example.Editor"],
+    ]
+
+
+@pytest.mark.parametrize("fetch_data", [None, [], [None], [(b"metadata", 123)]])
+def test_email_reader_reports_missing_or_invalid_message_payload(monkeypatch, fetch_data):
+    class FakeIMAP:
+        def __init__(self, *_args, **_kwargs):
+            pass
+
+        def login(self, *_args):
+            pass
+
+        def select(self, *_args):
+            return "OK", []
+
+        def search(self, *_args):
+            return "OK", [b"42"]
+
+        def fetch(self, *_args):
+            return "OK", fetch_data
+
+        def logout(self):
+            pass
+
+    monkeypatch.setattr(config, "EMAIL_ADDRESS", "user@example.test")
+    monkeypatch.setattr(config, "EMAIL_PASSWORD", "test-password")
+    monkeypatch.setattr(tools.imaplib, "IMAP4_SSL", FakeIMAP)
+
+    with pytest.raises(RuntimeError, match="formato inesperado"):
+        tools.leer_correos()
+
+
+def test_wakeword_reports_missing_optional_model_dependency(monkeypatch):
+    import wakeword
+
+    monkeypatch.setattr(wakeword, "_model", None)
+    monkeypatch.setattr(wakeword, "_ModelFactory", None)
+
+    with pytest.raises(RuntimeError, match="requiere openwakeword"):
+        wakeword._get_model()
+
+
+def test_application_launch_verifier_recognizes_new_status_text(monkeypatch):
+    class Result:
+        success = True
+        data = None
+
+    monkeypatch.setattr(tools, "comprobar_aplicacion", lambda _name: "Editor está instalada y está ejecutándose.")
+    verification = Verifier().verify("abrir_aplicacion", {"nombre": "Editor"}, Result())
+    assert verification.verified
+
+
+def test_desktop_exec_field_codes_do_not_become_shell_commands():
+    application = {
+        "name": "Editor",
+        "exec": "/usr/bin/editor --label=%c %U --literal=%%",
+        "path": "/apps/editor.desktop",
+        "icon": "editor",
+    }
+    assert tools._desktop_exec_argv(application) == [
+        "/usr/bin/editor",
+        "--label=Editor",
+        "--literal=%",
+    ]
+
+
+def test_arbitrary_shell_text_is_not_accepted_as_application(monkeypatch, tmp_path):
+    monkeypatch.setattr(tools, "_application_dirs", lambda: [tmp_path])
+    monkeypatch.setattr(config, "ALLOWED_APPS", set())
+    with pytest.raises(FileNotFoundError):
+        tools._find_application("sh -c 'touch /tmp/not-an-app'")

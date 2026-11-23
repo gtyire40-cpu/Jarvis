@@ -10,7 +10,12 @@ de usuario de confianza y revisa las confirmaciones antes de permitir acciones.
   ese valor en `~` salvo que entiendas las consecuencias.
 - Las herramientas sensibles pueden pedir confirmación mediante la GUI o el
   modo de texto. Sin callback de confirmación, la acción protegida se bloquea.
-- Las aplicaciones que se pueden abrir se limitan con `JARVIS_ALLOWED_APPS`.
+- Jarvis solo descubre aplicaciones gráficas registradas en archivos
+  `.desktop` del menú del usuario/sistema; permite abrirlas, consultar si se
+  ejecutan y cerrarlas, pero no interpreta texto del chat como comandos de
+  terminal. `JARVIS_ALLOWED_APPS` solo mantiene compatibilidad con nombres
+  antiguos que no tengan una entrada de menú. Al cerrar una aplicación
+  Flatpak, la acción apunta a su identificador exacto.
 - El acceso web está diseñado para URLs públicas HTTP/HTTPS; no debe usarse como
   frontera de seguridad para datos sensibles ni como proxy.
 - El modelo local puede proponer acciones incorrectas. Las verificaciones y

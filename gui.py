@@ -20,6 +20,7 @@ from __future__ import annotations
 import json, os, queue, threading, time
 import tkinter as tk
 from tkinter import messagebox, ttk
+from typing import Callable, Literal
 
 import config
 import memory
@@ -30,13 +31,13 @@ from core.tool_manager import ToolManager
 
 SETTINGS_PATH = os.path.join(os.path.dirname(__file__), "settings.json")
 # ---------------------------------------------------------------- paleta --
-BG = "#060a12"; SIDEBAR = "#0a101b"; TOPBAR = "#080d17"; PANEL = "#0d1522"; PANEL_2 = "#121e30"
-CARD = "#101b2b"; BORDER = "#20314a"; BORDER_SOFT = "#182640"
-TEXT = "#edf5ff"; MUTED = "#71839f"; DIM = "#4a5b76"
-ACCENT = "#4da8ff"; ACCENT_SOFT = "#8bd0ff"; CYAN = "#39e6ff"
-SUCCESS = "#59e0a2"; WARNING = "#f1c86a"; DANGER = "#ff667d"
-BUBBLE_USER = "#15304d"; BUBBLE_ASSISTANT = "#0f1a2a"
-FONT = "Segoe UI"; MONO = "Consolas"
+BG = "#0a0f14"; SIDEBAR = "#0e151c"; TOPBAR = "#0e151c"; PANEL = "#111a22"; PANEL_2 = "#17232d"
+CARD = "#15212b"; BORDER = "#263743"; BORDER_SOFT = "#202e38"
+TEXT = "#edf3f7"; MUTED = "#9aabb8"; DIM = "#718391"
+ACCENT = "#69d5c3"; ACCENT_SOFT = "#a0eadc"; CYAN = "#77dfd0"
+SUCCESS = "#79c49d"; WARNING = "#d8b66d"; DANGER = "#dc8181"
+BUBBLE_USER = "#1d3538"; BUBBLE_ASSISTANT = "#17232b"
+FONT = "TkDefaultFont"; MONO = "TkFixedFont"
 
 SLASH_COMMANDS = [
     ("buscar", "🔍", "Busca información actual en Internet.", "Búsqueda",
@@ -125,9 +126,12 @@ class HoverButton(RoundedPanel):
     lateral, la paleta de comandos y acciones destacadas."""
 
     def __init__(self, parent, text, command=None, icon="", radius=10, bg_color=PANEL_2, hover_color=None,
-                 fg=TEXT, font=(FONT, 10, "bold"), anchor="w", padx=14, pady=9, **kw):
+                 fg=TEXT, font=(FONT, 10, "bold"),
+                 anchor: Literal["nw", "n", "ne", "w", "center", "e", "sw", "s", "se"] = "w",
+                 padx=14, pady=9, **kw):
         super().__init__(parent, radius=radius, bg_color=bg_color, **kw)
         self.command = command; self.base_bg = bg_color; self.hover_bg = hover_color or bg_color
+        self.base_fg = fg
         row = tk.Frame(self.inner, bg=bg_color); row.pack(fill="x", padx=padx, pady=pady)
         self._labels = []
         if icon:
@@ -137,9 +141,9 @@ class HoverButton(RoundedPanel):
             w.bind("<Enter>", self._on_enter); w.bind("<Leave>", self._on_leave); w.bind("<Button-1>", self._on_click)
         self._row = row
 
-    def _apply(self, color):
+    def _apply(self, color, fg=None):
         self.set_bg(color); self._row.configure(bg=color)
-        for w in self._labels: w.configure(bg=color)
+        for w in self._labels: w.configure(bg=color, fg=fg or self.base_fg)
 
     def _on_enter(self, _e=None):
         if self.hover_bg != self.base_bg: self._apply(self.hover_bg)
@@ -150,8 +154,9 @@ class HoverButton(RoundedPanel):
         if self.command: self.command()
 
     def set_active(self, active):
-        self.base_bg = self.hover_bg if active else PANEL_2
-        self._apply(self.base_bg)
+        self.base_bg = "#243242" if active else SIDEBAR
+        self.base_fg = ACCENT_SOFT if active else MUTED
+        self._apply(self.base_bg, self.base_fg)
 
 
 def _fmt_time(): return time.strftime("%H:%M")
@@ -162,8 +167,20 @@ class ChatFeed(tk.Frame):
 
     def __init__(self, parent, bg=BG):
         super().__init__(parent, bg=bg)
+        self.bg = bg
         self.canvas = tk.Canvas(self, bg=bg, highlightthickness=0)
-        self.vsb = ttk.Scrollbar(self, orient="vertical", command=self.canvas.yview)
+        self.vsb = tk.Scrollbar(
+            self,
+            orient="vertical",
+            command=self.canvas.yview,
+            bg=PANEL_2,
+            troughcolor=BG,
+            activebackground=ACCENT,
+            relief="flat",
+            bd=0,
+            highlightthickness=0,
+            width=9,
+        )
         self.inner = tk.Frame(self.canvas, bg=bg)
         self.inner.bind("<Configure>", lambda e: self.canvas.configure(scrollregion=self.canvas.bbox("all")))
         self.win = self.canvas.create_window((0, 0), window=self.inner, anchor="nw")
@@ -194,24 +211,23 @@ class ChatFeed(tk.Frame):
     def add_bubble(self, role, text, ts=None, animate=False, tag=None):
         ts = ts or _fmt_time()
         is_user = role == "user"
-        row = tk.Frame(self.inner, bg=BG); row.pack(fill="x", padx=18, pady=(4, 4))
-        col = tk.Frame(row, bg=BG)
+        row = tk.Frame(self.inner, bg=self.bg); row.pack(fill="x", padx=18, pady=(6, 6))
+        col = tk.Frame(row, bg=self.bg)
         if is_user:
             col.pack(side="right")
         else:
-            av = tk.Canvas(row, width=30, height=30, bg=BG, highlightthickness=0); av.pack(side="left", padx=(0, 8), pady=(2, 0))
-            av.create_oval(3, 3, 27, 27, outline=CYAN, width=1.4)
-            av.create_oval(9, 9, 21, 21, outline=ACCENT, width=1.4)
-            av.create_oval(13, 13, 17, 17, fill=CYAN, outline="")
+            av = tk.Canvas(row, width=30, height=30, bg=self.bg, highlightthickness=0); av.pack(side="left", padx=(0, 9), pady=(2, 0))
+            av.create_oval(3, 3, 27, 27, fill="#243242", outline="")
+            av.create_text(15, 15, text="J", fill=ACCENT_SOFT, font=(FONT, 10, "bold"))
             col.pack(side="left")
         bubble_bg = BUBBLE_USER if is_user else BUBBLE_ASSISTANT
-        panel = RoundedPanel(col, radius=14, bg_color=bubble_bg, parent_bg=BG)
+        panel = RoundedPanel(col, radius=10, bg_color=bubble_bg, parent_bg=self.bg)
         panel.pack(anchor="e" if is_user else "w")
         if tag:
             tk.Label(panel.inner, text=tag, bg=bubble_bg, fg=CYAN, font=(MONO, 7, "bold")).pack(anchor="w", padx=14, pady=(9, 0))
-        lbl = tk.Label(panel.inner, text="", bg=bubble_bg, fg=TEXT, font=(FONT, 10), justify="left", wraplength=620, anchor="w")
-        lbl.pack(padx=14, pady=(9 if not tag else 2, 9))
-        meta = tk.Label(col, text=("TÚ · " if is_user else "JARVIS · ") + ts, bg=BG, fg=DIM, font=(FONT, 7, "bold"))
+        lbl = tk.Label(panel.inner, text="", bg=bubble_bg, fg=TEXT, font=(FONT, 10), justify="left", wraplength=680, anchor="w")
+        lbl.pack(padx=15, pady=(10 if not tag else 3, 10))
+        meta = tk.Label(col, text=("TÚ · " if is_user else "JARVIS · ") + ts, bg=self.bg, fg=DIM, font=(FONT, 8))
         meta.pack(anchor="e" if is_user else "w", padx=4, pady=(3, 0))
 
         full = (text or "").strip()
@@ -237,10 +253,11 @@ class ChatFeed(tk.Frame):
         lbl.after(delay, lambda: self._type(lbl, chars, i + 1))
 
     def add_thinking(self):
-        row = tk.Frame(self.inner, bg=BG); row.pack(fill="x", padx=18, pady=(4, 4))
-        av = tk.Canvas(row, width=30, height=30, bg=BG, highlightthickness=0); av.pack(side="left", padx=(0, 8))
-        av.create_oval(3, 3, 27, 27, outline=CYAN, width=1.4)
-        panel = RoundedPanel(row, radius=14, bg_color=BUBBLE_ASSISTANT, parent_bg=BG); panel.pack(side="left")
+        row = tk.Frame(self.inner, bg=self.bg); row.pack(fill="x", padx=18, pady=(6, 6))
+        av = tk.Canvas(row, width=30, height=30, bg=self.bg, highlightthickness=0); av.pack(side="left", padx=(0, 9))
+        av.create_oval(3, 3, 27, 27, fill="#243242", outline="")
+        av.create_text(15, 15, text="J", fill=ACCENT_SOFT, font=(FONT, 10, "bold"))
+        panel = RoundedPanel(row, radius=10, bg_color=BUBBLE_ASSISTANT, parent_bg=self.bg); panel.pack(side="left")
         lbl = tk.Label(panel.inner, text="Procesando", bg=BUBBLE_ASSISTANT, fg=CYAN, font=(MONO, 9, "bold")); lbl.pack(padx=14, pady=10)
         self.scroll_bottom()
 
@@ -261,11 +278,16 @@ class ChatFeed(tk.Frame):
 class JarvisGUI:
     def __init__(self, root):
         self.root = root
-        self.root.title("JARVIS LOCAL"); self.root.geometry("1360x820"); self.root.minsize(1060, 700); self.root.configure(bg=BG)
+        self.root.title("Jarvis")
+        self.root.geometry("1360x860")
+        self.root.minsize(980, 680)
+        self.root.configure(bg=BG)
+        self._select_fonts()
         self.settings = load_settings(); self.events = queue.Queue(); self.busy = False; self.listening = False
         self.voice_stop = threading.Event(); self.cancel_event = threading.Event(); self.speech_cancel_event = threading.Event()
         self.speaking = False; self.ready_event = threading.Event(); self.ready_event.set()
         self._pending_privacy_close = None; self._pending_confirm_close = None
+        self._thinking_stop: Callable[[], None] | None = None
         self.mode = "Normal"; self.pending_directive = None
         self.messages = [{"role": "system", "content": config.SYSTEM_PROMPT}]
         memory.init_db(); self.messages.extend(memory.cargar_historial(int(self.settings.get("history_max", 40))))
@@ -277,103 +299,129 @@ class JarvisGUI:
             privacy_callback=self._privacy_confirm,
             enabled_tool_groups=self.settings["enabled_tool_groups"],
         ))
-        self._configure_style(); self._build(); self._render_history(); self._animate_header(); self._poll_stats()
+        self._configure_style(); self._build(); self._render_history(); self._poll_stats()
         self.root.after(60, self._drain_events); self.root.protocol("WM_DELETE_WINDOW", self._close)
+
+    def _select_fonts(self):
+        global FONT, MONO
+        import tkinter.font as tkfont
+
+        available = set(tkfont.families(self.root))
+        FONT = next((name for name in ("Inter", "Noto Sans", "Cantarell", "DejaVu Sans", "Liberation Sans") if name in available), "TkDefaultFont")
+        MONO = next((name for name in ("JetBrains Mono", "Cascadia Code", "DejaVu Sans Mono", "Liberation Mono") if name in available), "TkFixedFont")
+        tkfont.nametofont("TkDefaultFont").configure(family=FONT, size=10)
+        tkfont.nametofont("TkFixedFont").configure(family=MONO, size=9)
 
     # -- estilo ttk (widgets nativos: entradas, checkbox, scrollbar) --
     def _configure_style(self):
         s = ttk.Style(self.root); s.theme_use("clam")
         s.configure("TFrame", background=BG)
         s.configure("TLabel", background=BG, foreground=TEXT, font=(FONT, 10))
-        s.configure("TCheckbutton", background=PANEL, foreground=TEXT, font=(FONT, 9))
-        s.map("TCheckbutton", background=[("active", PANEL)])
-        s.configure("TEntry", fieldbackground=PANEL_2, foreground=TEXT, insertcolor=CYAN, bordercolor=BORDER, lightcolor=BORDER, darkcolor=BORDER, padding=8)
-        s.configure("Vertical.TScrollbar", background=PANEL_2, troughcolor=BG, bordercolor=BG, arrowcolor=MUTED, lightcolor=PANEL_2, darkcolor=PANEL_2)
+        s.configure("TCheckbutton", background=CARD, foreground=TEXT, font=(FONT, 9), padding=5)
+        s.map("TCheckbutton", background=[("active", CARD)], foreground=[("disabled", DIM)])
+        s.configure("TEntry", fieldbackground="#11171e", foreground=TEXT, insertcolor=ACCENT,
+                    bordercolor=BORDER, lightcolor=BORDER, darkcolor=BORDER, padding=9)
+        s.configure("Vertical.TScrollbar", background=PANEL_2, troughcolor=BG, bordercolor=BG,
+                    arrowcolor=MUTED, lightcolor=PANEL_2, darkcolor=PANEL_2, width=10)
 
     def _build(self):
         self._build_topbar()
         body = tk.Frame(self.root, bg=BG); body.pack(fill="both", expand=True)
         self._build_sidebar(body)
-        self.content = tk.Frame(body, bg=BG); self.content.pack(side="left", fill="both", expand=True, padx=(0, 20), pady=(0, 18))
+        self.content = tk.Frame(body, bg=BG); self.content.pack(side="left", fill="both", expand=True, padx=(14, 18), pady=(0, 18))
         self.pages = {}
         self._build_chat_page(); self._build_activity_page(); self._build_memory_page(); self._build_tools_page(); self._build_diagnostics_page(); self._build_settings_page()
         self._show_page("chat", animate=False)
 
-    # -- barra superior estilo HUD --
+    # -- barra superior --
     def _build_topbar(self):
-        bar = tk.Frame(self.root, bg=TOPBAR, height=34); bar.pack(fill="x"); bar.pack_propagate(False)
-        tk.Frame(bar, bg=BORDER_SOFT, height=1).pack(side="bottom", fill="x")
-        tk.Label(bar, text="JARVIS LOCAL", bg=TOPBAR, fg=MUTED, font=(MONO, 9, "bold")).pack(side="left", padx=18)
-        right = tk.Frame(bar, bg=TOPBAR); right.pack(side="right", padx=16)
-        self.top_status_dot = tk.Canvas(right, width=9, height=9, bg=TOPBAR, highlightthickness=0); self.top_status_dot.pack(side="left", padx=(0, 6))
-        self.top_status_dot.create_oval(1, 1, 8, 8, fill=SUCCESS, outline="")
-        tk.Label(right, text="Sistema OK", bg=TOPBAR, fg=MUTED, font=(FONT, 9, "bold")).pack(side="left")
+        bar = tk.Frame(self.root, bg=TOPBAR, height=58); bar.pack(fill="x"); bar.pack_propagate(False)
+        tk.Frame(bar, bg=BORDER, height=1).pack(side="bottom", fill="x")
+        brand = tk.Frame(bar, bg=TOPBAR); brand.pack(side="left", padx=22)
+        tk.Label(brand, text="Jarvis", bg=TOPBAR, fg=TEXT, font=(FONT, 14, "bold")).pack(side="left")
+        tk.Label(brand, text="  ASISTENTE LOCAL", bg=TOPBAR, fg=DIM, font=(FONT, 8, "bold")).pack(side="left", pady=(4, 0))
+        right = tk.Frame(bar, bg=TOPBAR); right.pack(side="right", padx=22)
+        self.top_status_dot = tk.Canvas(right, width=9, height=9, bg=TOPBAR, highlightthickness=0)
+        self.top_status_dot.pack(side="left", padx=(0, 8))
+        self.top_status_dot_id = self.top_status_dot.create_oval(1, 1, 8, 8, fill=SUCCESS, outline="")
+        self.top_status_text = tk.StringVar(value="Listo")
+        tk.Label(right, textvariable=self.top_status_text, bg=TOPBAR, fg=MUTED, font=(FONT, 9)).pack(side="left")
 
     # -- barra lateral --
     def _build_sidebar(self, parent):
-        side = tk.Frame(parent, bg=SIDEBAR, width=216); side.pack(side="left", fill="y"); side.pack_propagate(False)
-        self.hud = tk.Canvas(side, width=216, height=118, bg=SIDEBAR, highlightthickness=0); self.hud.pack(fill="x", pady=(16, 4))
-        self.hud.create_oval(74, 12, 142, 80, outline="#21466b", width=1)
-        self.hud.create_oval(85, 23, 131, 69, outline="#1a9cc4", width=2)
-        self.hud.create_oval(98, 36, 118, 56, outline=CYAN, width=2)
-        self.hud.create_text(108, 92, text="J A R V I S", fill=TEXT, font=(FONT, 13, "bold"))
-        self.hud.create_text(108, 106, text="LOCAL INTELLIGENCE", fill=MUTED, font=(FONT, 7, "bold"))
+        side = tk.Frame(parent, bg=SIDEBAR, width=238); side.pack(side="left", fill="y"); side.pack_propagate(False)
+        brand = tk.Frame(side, bg=SIDEBAR); brand.pack(fill="x", padx=22, pady=(24, 26))
+        tk.Label(brand, text="J", bg="#243242", fg=ACCENT_SOFT, width=2, height=1,
+                 font=(FONT, 15, "bold")).pack(side="left", padx=(0, 11), ipady=5)
+        brand_text = tk.Frame(brand, bg=SIDEBAR); brand_text.pack(side="left")
+        tk.Label(brand_text, text="Jarvis", bg=SIDEBAR, fg=TEXT, font=(FONT, 14, "bold")).pack(anchor="w")
+        tk.Label(brand_text, text="ASISTENTE PERSONAL", bg=SIDEBAR, fg=DIM, font=(FONT, 7, "bold")).pack(anchor="w", pady=(2, 0))
 
-        nav = tk.Frame(side, bg=SIDEBAR); nav.pack(fill="x", padx=10, pady=(6, 0))
+        tk.Label(side, text="ESPACIO DE TRABAJO", bg=SIDEBAR, fg=DIM, font=(FONT, 7, "bold")).pack(anchor="w", padx=22, pady=(0, 8))
+        nav = tk.Frame(side, bg=SIDEBAR); nav.pack(fill="x", padx=12)
         self.nav_buttons = {}
-        for key, icon, label in (("chat", "💬", "Conversación"), ("activity", "🕘", "Actividad"), ("memory", "🗂", "Memoria"),
-                                  ("tools", "🛠", "Herramientas"), ("diagnostics", "📈", "Diagnóstico"), ("settings", "⚙", "Configuración")):
-            b = HoverButton(nav, label, command=lambda k=key: self._show_page(k), icon=icon, radius=10,
-                            bg_color=SIDEBAR, hover_color=PANEL_2, fg=MUTED, font=(FONT, 10, "bold"), padx=13, pady=10)
+        for key, icon, label in (("chat", "○", "Conversación"), ("activity", "◷", "Actividad"), ("memory", "▤", "Memoria"),
+                                  ("tools", "⌘", "Herramientas"), ("diagnostics", "◫", "Diagnóstico"), ("settings", "⚙", "Configuración")):
+            b = HoverButton(nav, label, command=lambda k=key: self._show_page(k), icon=icon, radius=8,
+                            bg_color=SIDEBAR, hover_color=PANEL_2, fg=MUTED, font=(FONT, 9), padx=11, pady=8)
             b.pack(fill="x", pady=2); self.nav_buttons[key] = b
         self.nav_buttons["chat"].set_active(True)
 
         tk.Frame(side, bg=SIDEBAR).pack(fill="both", expand=True)
-        stats = tk.Frame(side, bg=SIDEBAR); stats.pack(fill="x", padx=18, pady=(0, 10))
+        tk.Frame(side, bg=BORDER, height=1).pack(fill="x", padx=20, pady=(0, 14))
+        tk.Label(side, text="RECURSOS DEL SISTEMA", bg=SIDEBAR, fg=DIM, font=(FONT, 7, "bold")).pack(anchor="w", padx=22, pady=(0, 8))
+        stats = tk.Frame(side, bg=SIDEBAR); stats.pack(fill="x", padx=22, pady=(0, 18))
         self.stat_labels = {}
         for key, label in (("gpu", "GPU"), ("cpu", "CPU"), ("ram", "RAM")):
             row = tk.Frame(stats, bg=SIDEBAR); row.pack(fill="x", pady=1)
-            tk.Label(row, text=label, bg=SIDEBAR, fg=DIM, font=(MONO, 7, "bold"), width=4, anchor="w").pack(side="left")
-            v = tk.Label(row, text="—", bg=SIDEBAR, fg=MUTED, font=(MONO, 7, "bold")); v.pack(side="left")
+            tk.Label(row, text=label, bg=SIDEBAR, fg=MUTED, font=(FONT, 8), width=5, anchor="w").pack(side="left")
+            v = tk.Label(row, text="—", bg=SIDEBAR, fg=TEXT, font=(FONT, 8, "bold")); v.pack(side="left")
             self.stat_labels[key] = v
 
-        status_row = tk.Frame(side, bg=SIDEBAR); status_row.pack(anchor="w", padx=19, pady=(0, 3))
-        self.side_dot = tk.Canvas(status_row, width=9, height=9, bg=SIDEBAR, highlightthickness=0); self.side_dot.pack(side="left", padx=(0, 6))
-        self._side_dot_id = self.side_dot.create_oval(1, 1, 8, 8, fill=SUCCESS, outline="")
-        self.side_status = tk.StringVar(value="SISTEMA ONLINE")
-        tk.Label(status_row, textvariable=self.side_status, bg=SIDEBAR, fg=SUCCESS, font=(FONT, 9, "bold")).pack(side="left")
-        tk.Label(side, text="OLLAMA · GPU AUTO · CPU FALLBACK", bg=SIDEBAR, fg=DIM, font=(MONO, 7)).pack(anchor="w", padx=19, pady=(0, 16))
+        status_row = tk.Frame(side, bg=SIDEBAR); status_row.pack(anchor="w", padx=22, pady=(0, 4))
+        self.side_dot = tk.Canvas(status_row, width=8, height=8, bg=SIDEBAR, highlightthickness=0); self.side_dot.pack(side="left", padx=(0, 7))
+        self._side_dot_id = self.side_dot.create_oval(1, 1, 7, 7, fill=SUCCESS, outline="")
+        self.side_status = tk.StringVar(value="Sistema en línea")
+        tk.Label(status_row, textvariable=self.side_status, bg=SIDEBAR, fg=MUTED, font=(FONT, 8)).pack(side="left")
+        tk.Label(side, text="Ollama · procesamiento local", bg=SIDEBAR, fg=DIM, font=(FONT, 7)).pack(anchor="w", padx=22, pady=(0, 18))
 
     # -- páginas --
     def _new_page(self, title, subtitle):
-        page = RoundedPanel(self.content, radius=16, bg_color=PANEL, outline_color=BORDER, outline_width=1, parent_bg=BG)
+        page = tk.Frame(
+            self.content,
+            bg=PANEL,
+            highlightbackground=BORDER,
+            highlightthickness=1,
+            bd=0,
+        )
         page.place(relx=0, rely=0, relwidth=1, relheight=1)
-        inner = page.inner; inner.pack_propagate(False)
+        page.pack_propagate(False)
+        inner = page
         top = tk.Frame(inner, bg=PANEL); top.pack(fill="x", padx=24, pady=(20, 12))
-        tk.Label(top, text=title, bg=PANEL, fg=TEXT, font=(FONT, 18, "bold")).pack(anchor="w")
-        tk.Label(top, text=subtitle, bg=PANEL, fg=MUTED, font=(FONT, 9)).pack(anchor="w", pady=(3, 0))
+        tk.Label(top, text=title, bg=PANEL, fg=TEXT, font=(FONT, 17, "bold")).pack(anchor="w")
+        tk.Label(top, text=subtitle, bg=PANEL, fg=MUTED, font=(FONT, 9)).pack(anchor="w", pady=(5, 0))
         return page, inner
-
-    def _lock_page_size(self, page):
-        def sync(_e=None):
-            w = self.content.winfo_width(); h = self.content.winfo_height()
-            if w > 2 and h > 2: page.inner.configure(width=w, height=h)
-        self.content.bind("<Configure>", sync, add="+")
-        self.root.after(30, sync)
 
     def _build_chat_page(self):
         page, inner = self._new_page("Conversación", "Asistente local con control verificable, memoria y herramientas.")
-        self._lock_page_size(page)
         self.chat = ChatFeed(inner, bg=PANEL); self.chat.canvas.configure(bg=PANEL); self.chat.inner.configure(bg=PANEL)
-        self.chat.pack(fill="both", expand=True, padx=6, pady=(0, 10))
+        self.chat.pack(fill="both", expand=True, padx=16, pady=(0, 8))
 
-        self.palette_holder = tk.Frame(inner, bg=PANEL); self.palette_holder.pack(fill="x", padx=24)
+        self.palette_holder = tk.Frame(inner, bg=PANEL); self.palette_holder.pack(fill="x", padx=24, pady=(0, 4))
         self.palette = None; self.mode_chip = None
 
         composer = tk.Frame(inner, bg=PANEL); composer.pack(fill="x", padx=24, pady=(0, 8)); composer.columnconfigure(0, weight=1)
-        input_panel = RoundedPanel(composer, radius=12, bg_color=PANEL_2, parent_bg=PANEL); input_panel.grid(row=0, column=0, sticky="ew", padx=(0, 10))
-        self.input = tk.Text(input_panel.inner, height=3, bg=PANEL_2, fg=TEXT, insertbackground=CYAN, relief="flat", bd=0, wrap="word", padx=14, pady=10, font=(FONT, 10))
-        self.input.pack(fill="both", expand=True)
+        input_panel = tk.Frame(
+            composer,
+            bg=PANEL_2,
+            highlightbackground=BORDER,
+            highlightthickness=1,
+            bd=0,
+        )
+        input_panel.grid(row=0, column=0, sticky="ew", padx=(0, 10))
+        self.input = tk.Text(input_panel, height=3, bg=PANEL_2, fg=TEXT, insertbackground=CYAN, relief="flat",
+                             bd=0, wrap="word", padx=14, pady=10, font=(FONT, 10), undo=True)
+        self.input.pack(fill="both", expand=True, padx=1, pady=1)
         self.input.bind("<Control-Return>", lambda e: self._send_text())
         self.input.bind("<KeyRelease>", self._on_input_key)
 
@@ -390,7 +438,9 @@ class JarvisGUI:
 
         bottom = tk.Frame(inner, bg=PANEL); bottom.pack(fill="x", padx=25, pady=(0, 14))
         self.status = tk.StringVar(value="SISTEMA LISTO")
+        self.status.trace_add("write", self._sync_status)
         tk.Label(bottom, textvariable=self.status, bg=PANEL, fg=SUCCESS, font=(MONO, 8, "bold")).pack(side="left")
+        tk.Label(bottom, text="Ctrl + Enter para enviar", bg=PANEL, fg=DIM, font=(FONT, 8)).pack(side="left", padx=(14, 0))
         mode_box = HoverButton(bottom, f"Modo: {self.mode}  ▾", command=self._cycle_mode, radius=8, bg_color=PANEL_2, hover_color="#1b2b43",
                                 fg=ACCENT_SOFT, font=(FONT, 8, "bold"), anchor="center", padx=10, pady=5)
         mode_box.pack(side="right"); self.mode_btn = mode_box
@@ -454,25 +504,22 @@ class JarvisGUI:
 
     def _build_activity_page(self):
         page, inner = self._new_page("Actividad", "Registro visual de ejecución, verificación y resultado de herramientas.")
-        self._lock_page_size(page)
-        self.activity = tk.Text(inner, bg="#08101b", fg=MUTED, relief="flat", bd=0, wrap="word", padx=18, pady=18, font=(MONO, 9), state="disabled")
+        self.activity = tk.Text(inner, bg=CARD, fg=MUTED, relief="flat", bd=0, wrap="word", padx=18, pady=18, font=(MONO, 9), state="disabled")
         self.activity.pack(fill="both", expand=True, padx=24, pady=(0, 24))
         self.activity.tag_configure("tool", foreground=WARNING); self.activity.tag_configure("ok", foreground=SUCCESS); self.activity.tag_configure("err", foreground=DANGER)
         self.pages["activity"] = page
 
     def _build_memory_page(self):
         page, inner = self._new_page("Memoria", "Recuerdos persistentes separados del historial de conversación.")
-        self._lock_page_size(page)
         row = tk.Frame(inner, bg=PANEL); row.pack(fill="x", padx=24, pady=(0, 10))
         HoverButton(row, "ACTUALIZAR", command=self._refresh_memory, radius=8, bg_color=PANEL_2, hover_color="#1b2b43", fg=TEXT, font=(FONT, 9, "bold"), anchor="center", padx=14, pady=8).pack(side="left")
         HoverButton(row, "LIMPIAR HISTORIAL", command=self._clear_history, radius=8, bg_color=PANEL_2, hover_color="#3a1d28", fg=DANGER, font=(FONT, 9, "bold"), anchor="center", padx=14, pady=8).pack(side="left", padx=8)
-        self.memory_view = tk.Text(inner, bg="#08101b", fg=TEXT, relief="flat", bd=0, wrap="word", padx=18, pady=18, font=(MONO, 9), state="disabled")
+        self.memory_view = tk.Text(inner, bg=CARD, fg=TEXT, relief="flat", bd=0, wrap="word", padx=18, pady=18, font=(MONO, 9), state="disabled")
         self.memory_view.pack(fill="both", expand=True, padx=24, pady=(0, 24))
         self.pages["memory"] = page
 
     def _build_tools_page(self):
         page, inner = self._new_page("Herramientas", "Mapa de capacidades de Jarvis y su estado operativo.")
-        self._lock_page_size(page)
         box = tk.Frame(inner, bg=PANEL); box.pack(fill="both", expand=True, padx=24, pady=(0, 24))
         group_panel = RoundedPanel(box, radius=10, bg_color=CARD, outline_color=BORDER_SOFT, outline_width=1, parent_bg=PANEL)
         group_panel.pack(fill="x", pady=(0, 10))
@@ -504,8 +551,7 @@ class JarvisGUI:
 
     def _build_diagnostics_page(self):
         page, inner = self._new_page("Diagnóstico", "Comprobación rápida del entorno real.")
-        self._lock_page_size(page)
-        self.diag_view = tk.Text(inner, bg="#08101b", fg=TEXT, relief="flat", bd=0, wrap="word", padx=18, pady=18, font=(MONO, 9), state="disabled")
+        self.diag_view = tk.Text(inner, bg=CARD, fg=TEXT, relief="flat", bd=0, wrap="word", padx=18, pady=18, font=(MONO, 9), state="disabled")
         self.diag_view.pack(fill="both", expand=True, padx=24, pady=(0, 12))
         HoverButton(inner, "EJECUTAR DIAGNÓSTICO", command=self._run_diagnostics, radius=10, bg_color=ACCENT, hover_color=ACCENT_SOFT,
                     fg="#03101a", font=(FONT, 10, "bold"), anchor="center", padx=15, pady=10).pack(fill="x", padx=24, pady=(0, 24))
@@ -540,7 +586,6 @@ class JarvisGUI:
 
     def _build_settings_page(self):
         page, inner = self._new_page("Configuración", "Controla el comportamiento de Jarvis sin editar archivos.")
-        self._lock_page_size(page)
         form = tk.Frame(inner, bg=PANEL); form.pack(fill="both", expand=True, padx=24, pady=(0, 24))
         self.setting_vars = {}
         sections = {"IA": [("model", "Modelo Ollama", self.settings["model"]), ("ollama_url", "URL Ollama", self.settings["ollama_url"]),
@@ -584,12 +629,14 @@ class JarvisGUI:
             if m.get("role") == "user": self.chat.add_bubble("user", m.get("content", ""), animate=False)
             elif m.get("role") == "assistant" and m.get("content"): self.chat.add_bubble("assistant", m.get("content", ""), animate=False)
 
-    def _animate_header(self):
-        try:
-            self.hud.delete("sweep"); t = time.time(); a = int((t * 80) % 360)
-            self.hud.create_arc(68, 5, 148, 87, start=a, extent=38, outline=CYAN, width=2, tags="sweep")
-            self.root.after(70, self._animate_header)
-        except tk.TclError: pass
+    def _sync_status(self, *_args):
+        text = self.status.get()
+        self.top_status_text.set(text.title())
+        lowered = text.casefold()
+        color = DANGER if "error" in lowered else WARNING if any(
+            word in lowered for word in ("cancel", "deten", "escuch")
+        ) else SUCCESS if any(word in lowered for word in ("listo", "online", "sistema ok")) else ACCENT
+        self.top_status_dot.itemconfigure(self.top_status_dot_id, fill=color)
 
     # -- estadísticas de sistema en vivo (barra lateral) --
     def _poll_stats(self):
@@ -854,6 +901,12 @@ class JarvisGUI:
         self._thinking_stop = self.chat.add_thinking()
         threading.Thread(target=self._agent_worker, args=(speak,), daemon=True).start()
 
+    def _stop_thinking(self):
+        stop = self._thinking_stop
+        self._thinking_stop = None
+        if stop is not None:
+            stop()
+
     def _agent_worker(self, speak):
         try:
             response = ""
@@ -894,7 +947,7 @@ class JarvisGUI:
                     elif phase == "recovery": self._activity(f"↻ {name} · reintentando", "tool")
                     elif phase == "end": self._activity(f"■ {name} · {'OK' if e.get('success') else 'ERROR'} · {e.get('elapsed',0):.2f}s", "ok" if e.get('success') else "err")
                 elif kind == "response":
-                    if getattr(self, "_thinking_stop", None): self._thinking_stop(); self._thinking_stop = None
+                    self._stop_thinking()
                     response, speak = payload; self.chat.add_bubble("assistant", response, animate=True); self.status.set("RESPUESTA LISTA")
                     if speak:
                         self.speaking = True; self.speech_cancel_event = threading.Event()
@@ -903,7 +956,7 @@ class JarvisGUI:
                         self.status.set("REPRODUCIENDO VOZ…")
                         threading.Thread(target=self._speak_worker, args=(response, self.speech_cancel_event), daemon=True).start()
                 elif kind == "error":
-                    if getattr(self, "_thinking_stop", None): self._thinking_stop(); self._thinking_stop = None
+                    self._stop_thinking()
                     self.status.set("ERROR"); self._activity(payload, "err"); messagebox.showerror("Jarvis", payload, parent=self.root)
                 elif kind == "ready":
                     self.busy = False

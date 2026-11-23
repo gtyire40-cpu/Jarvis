@@ -4,7 +4,6 @@ import tempfile
 import time
 
 import numpy as np
-import sounddevice as sd
 from scipy.io.wavfile import write as write_wav
 
 import config
@@ -13,6 +12,18 @@ import gpu_runtime
 logger = logging.getLogger(__name__)
 SAMPLE_RATE = 16000
 _model = None
+
+
+def _get_sounddevice():
+    try:
+        import sounddevice
+        return sounddevice
+    except (ImportError, OSError) as exc:
+        raise RuntimeError(
+            "El audio de entrada no está disponible: falta la biblioteca "
+            "PortAudio del sistema. Instala libportaudio2/portaudio19-dev "
+            "para activar el reconocimiento por voz."
+        ) from exc
 
 
 def _get_model():
@@ -64,6 +75,7 @@ def _rms(block: np.ndarray) -> float:
 
 
 def grabar_duracion_fija_y_transcribir(segundos: float = None) -> str:
+    sd = _get_sounddevice()
     segundos = float(segundos or config.GRABACION_SEGUNDOS)
     print(f"Voz️ Escuchando hasta {segundos:.0f}s...")
     audio = sd.rec(int(segundos * SAMPLE_RATE), samplerate=SAMPLE_RATE, channels=1, dtype="int16")
@@ -75,6 +87,7 @@ def grabar_duracion_fija_y_transcribir(segundos: float = None) -> str:
 
 def grabar_hasta_silencio_y_transcribir(max_seconds: float = None, silence_seconds: float = None, cancel_event=None) -> str:
     """Graba desde que hay voz hasta detectar silencio sostenido, sin duración fija obligatoria."""
+    sd = _get_sounddevice()
     max_seconds = float(max_seconds or config.VOICE_MAX_SECONDS)
     silence_seconds = float(silence_seconds or config.VOICE_SILENCE_SECONDS)
     threshold = float(config.VOICE_RMS_THRESHOLD)

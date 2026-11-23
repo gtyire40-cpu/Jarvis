@@ -8,6 +8,7 @@ import time
 import urllib.request
 import venv
 from pathlib import Path
+from typing import Any
 
 ROOT = Path(__file__).resolve().parent
 VENV = ROOT / ".venv"
@@ -33,8 +34,16 @@ class UI:
     animación continua, alineado visualmente con la app principal."""
 
     def __init__(self):
-        self.root = None; self.canvas = None; self.label = None; self.detail = None; self.arc = None; self.phase = 0
-        self.step_dots = {}; self.step_labels = {}; self.bar = None; self.bar_w = 0
+        self.root: Any = None
+        self.canvas: Any = None
+        self.label: int | None = None
+        self.detail: int | None = None
+        self.arc: int | None = None
+        self.phase = 0
+        self.step_dots: dict[str, int] = {}
+        self.step_labels: dict[str, int] = {}
+        self.bar: int | None = None
+        self.bar_w = 0
         try:
             import tkinter as tk
             self.tk = tk
@@ -81,38 +90,68 @@ class UI:
 
     def _round_rect(self, x1, y1, x2, y2, r, **kw):
         pts = [x1 + r, y1, x2 - r, y1, x2, y1, x2, y1 + r, x2, y2 - r, x2, y2, x2 - r, y2, x1 + r, y2, x1, y2, x1, y2 - r, x1, y1 + r, x1, y1]
-        self.canvas.create_polygon(pts, smooth=True, **kw)
+        canvas = self.canvas
+        if canvas is not None:
+            canvas.create_polygon(pts, smooth=True, **kw)
 
     def _animate(self):
-        if not self.root: return
+        root = self.root
+        canvas = self.canvas
+        arc = self.arc
+        if root is None or canvas is None or arc is None:
+            return
         self.phase = (self.phase + 8) % 360
-        self.canvas.itemconfigure(self.arc, start=self.phase)
-        self.root.after(55, self._animate)
+        canvas.itemconfigure(arc, start=self.phase)
+        root.after(55, self._animate)
 
     def step(self, key, state="active"):
         """Marca un paso del checklist como activo/completado/error."""
-        if not self.root or key not in self.step_dots: return
+        root = self.root
+        canvas = self.canvas
+        dot = self.step_dots.get(key)
+        label = self.step_labels.get(key)
+        bar = self.bar
+        if root is None or canvas is None or dot is None or label is None or bar is None:
+            return
         color = {"active": ACCENT, "done": SUCCESS, "error": DANGER}.get(state, DIM)
-        self.canvas.itemconfigure(self.step_dots[key], fill=color)
-        self.canvas.itemconfigure(self.step_labels[key], fill=(TEXT if state != "pending" else DIM))
-        done_count = sum(1 for k in self.step_dots if self.canvas.itemcget(self.step_dots[k], "fill") == SUCCESS)
+        canvas.itemconfigure(dot, fill=color)
+        canvas.itemconfigure(label, fill=(TEXT if state != "pending" else DIM))
+        done_count = sum(
+            1 for step_id in self.step_dots.values()
+            if canvas.itemcget(step_id, "fill") == SUCCESS
+        )
         progress = (done_count + (0.5 if state == "active" else 0)) / len(STEPS)
         x = self.bar_x0 + (self.bar_x1 - self.bar_x0) * min(1.0, progress)
-        self.canvas.coords(self.bar, self.bar_x0, self.bar_y, x, self.bar_y)
-        self.root.update_idletasks(); self.root.update()
+        canvas.coords(bar, self.bar_x0, self.bar_y, x, self.bar_y)
+        root.update_idletasks(); root.update()
 
     def set(self, text, detail=""):
-        if self.root:
-            self.canvas.itemconfigure(self.label, text=text); self.canvas.itemconfigure(self.detail, text=detail); self.root.update_idletasks(); self.root.update()
+        root = self.root
+        canvas = self.canvas
+        label = self.label
+        detail_id = self.detail
+        if root is not None and canvas is not None and label is not None and detail_id is not None:
+            canvas.itemconfigure(label, text=text)
+            canvas.itemconfigure(detail_id, text=detail)
+            root.update_idletasks()
+            root.update()
         else: notify("Jarvis Local", text, False)
         log(f"STATUS: {text} {detail}")
 
     def error(self, text):
-        if self.root:
-            self.canvas.itemconfigure(self.label, text="No se pudo preparar Jarvis", fill=DANGER)
-            self.canvas.itemconfigure(self.detail, text=text, fill="#ff9aaa")
-            self.canvas.itemconfigure(self.bar, fill=DANGER)
-            self.root.update_idletasks(); self.root.update(); time.sleep(3); self.root.destroy()
+        root = self.root
+        canvas = self.canvas
+        label = self.label
+        detail_id = self.detail
+        bar = self.bar
+        if root is not None and canvas is not None and label is not None and detail_id is not None and bar is not None:
+            canvas.itemconfigure(label, text="No se pudo preparar Jarvis", fill=DANGER)
+            canvas.itemconfigure(detail_id, text=text, fill="#ff9aaa")
+            canvas.itemconfigure(bar, fill=DANGER)
+            root.update_idletasks()
+            root.update()
+            time.sleep(3)
+            root.destroy()
         notify("Jarvis Local", text, True)
 
 def log(text):
@@ -218,10 +257,51 @@ def ensure_voice(ui):
 
 def validate_runtime(ui):
     ui.set("Comprobando componentes…", "Piper, audio y aceleración disponible")
-    run([str(PY), "-c", "import gpu_runtime; gpu_runtime.prepare_cuda_runtime(); import faster_whisper, sounddevice, soundfile, piper; print('runtime-ok')"], ui, "Comprobando componentes…")
+    run([
+        str(PY),
+        "-c",
+        "import gpu_runtime; gpu_runtime.prepare_cuda_runtime(); "
+        "import faster_whisper, soundfile, piper; "
+        "print('runtime-core-ok'); "
+        "exec(\"try:\\n import sounddevice\\n print('audio-ok')\\nexcept (ImportError, OSError) as exc:\\n print('audio-unavailable:', exc)\")",
+    ], ui, "Comprobando componentes…")
     # Solo comprueba que el binario puede cargar el modelo; no reproduce sonido durante la instalación.
     run([str(PY), "-c", "import tts; print(tts._find_piper()); print(tts._find_model())"], ui, "Comprobando voz…")
     run([str(PY), "-c", "import gpu_runtime; print(gpu_runtime.diagnostics())"], ui, "Comprobando aceleración…")
+
+
+def host_gui_command():
+    """Use the host Python/Tk runtime in Flatpak, while keeping the Jarvis
+    virtualenv packages available through PYTHONPATH."""
+    if not shutil.which("flatpak-spawn"):
+        return None
+    host_python = "/usr/bin/python3.12"
+    if not os.path.isfile("/run/host" + host_python):
+        host_python = "/usr/bin/python3"
+    if not os.path.isfile("/run/host" + host_python):
+        return None
+    site_packages = VENV / "lib" / "python3.12" / "site-packages"
+    pythonpath = os.pathsep.join(str(path) for path in (ROOT, site_packages)
+                                 if path and os.path.exists(str(path)))
+    current = os.environ.get("PYTHONPATH")
+    if current:
+        pythonpath = os.pathsep.join((pythonpath, current))
+    environment = [
+        "env",
+        f"PYTHONPATH={pythonpath}",
+    ]
+    for name in ("DISPLAY", "WAYLAND_DISPLAY", "XDG_RUNTIME_DIR", "DBUS_SESSION_BUS_ADDRESS"):
+        value = os.environ.get(name)
+        if value:
+            environment.append(f"{name}={value}")
+    return [
+        "flatpak-spawn",
+        "--host",
+        *environment,
+        host_python,
+        str(ROOT / "main.py"),
+        "--gui",
+    ]
 
 def main():
     ui = UI()
@@ -247,13 +327,18 @@ def main():
         time.sleep(.4)
         if ui.root: ui.root.destroy()
         os.chdir(ROOT)
+        host_command = host_gui_command()
+        if host_command:
+            os.execvp(host_command[0], host_command)
         os.execv(str(PY), [str(PY), str(ROOT / "main.py"), "--gui"])
     except Exception as exc:
         msg = str(exc)
         log("ERROR: " + repr(exc))
         for key in ("env", "deps", "voice", "check"):
             # marca en rojo el primer paso que todavía no se completó
-            if ui.root and ui.canvas.itemcget(ui.step_dots.get(key, 0), "fill") not in (SUCCESS,):
+            canvas = ui.canvas
+            dot = ui.step_dots.get(key)
+            if ui.root is not None and canvas is not None and dot is not None and canvas.itemcget(dot, "fill") != SUCCESS:
                 ui.step(key, "error"); break
         ui.error(msg[:180])
         return 1

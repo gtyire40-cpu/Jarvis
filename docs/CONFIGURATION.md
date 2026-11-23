@@ -68,12 +68,16 @@ El bootstrap descarga el modelo si no está presente.
 `JARVIS_MAX_SEARCH_RESULTS` (predeterminado `15`) limita resultados en la
 búsqueda local de archivos.
 
-## Aplicaciones permitidas
+## Aplicaciones instaladas
 
-`JARVIS_ALLOWED_APPS` es una lista separada por comas. Por defecto incluye
-Firefox, VS Code, Nautilus, Spotify, Steam, Thunderbird, VLC, Discord y otros
-navegadores/aplicaciones comunes. Una aplicación debe estar permitida y
-disponible en el sistema para que Jarvis la abra.
+Jarvis descubre las aplicaciones gráficas publicadas en los menús `.desktop`
+del usuario, la distribución, Snap y Flatpak. Puede abrirlas por su nombre
+visible en el menú, comprobar si están ejecutándose y cerrarlas. Para Flatpak,
+la consulta y el cierre se limitan al identificador exacto de la aplicación.
+`JARVIS_ALLOWED_APPS` se conserva únicamente como compatibilidad para los
+nombres antiguos que no tengan un archivo `.desktop`; no limita las
+aplicaciones descubiertas. Jarvis no ejecuta comandos arbitrarios escritos en
+el chat.
 
 ## Correo y música
 
